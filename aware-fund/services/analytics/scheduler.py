@@ -177,7 +177,7 @@ def run_insider_detection():
 
     # Create ClickHouse client
     ch_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
-    ch_port = int(os.getenv('CLICKHOUSE_PORT', '9000'))
+    ch_port = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
     client = Client(host=ch_host, port=ch_port)
 
     # Run detection

@@ -16,7 +16,8 @@ Usage:
 
 Environment Variables:
     CLICKHOUSE_HOST - ClickHouse host (default: localhost)
-    CLICKHOUSE_PORT - ClickHouse port (default: 8123)
+    CLICKHOUSE_PORT - ClickHouse HTTP port (default: 8123)
+    CLICKHOUSE_NATIVE_PORT - ClickHouse native TCP port, used by NAV calc (default: 9000)
     CLICKHOUSE_DATABASE - Database name (default: polybot)
 """
 
@@ -692,7 +693,7 @@ def run_nav_calculation_job(ch_client) -> dict:
 
         # NAVCalculator uses clickhouse_driver, not clickhouse_connect
         ch_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
-        ch_port = int(os.getenv('CLICKHOUSE_PORT', '9000'))
+        ch_port = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
         driver_client = Client(host=ch_host, port=ch_port)
 
         calculator = NAVCalculator(driver_client)
