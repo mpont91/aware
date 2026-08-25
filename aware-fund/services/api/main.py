@@ -1796,16 +1796,25 @@ async def get_fund_index(index_type: str = Query(default="PSI-10")):
     try:
         client = get_clickhouse_client()
 
+        # username is often empty, so also return proxy_address and the
+        # pseudonym from the trader profile to identify the trader.
         query = """
         SELECT
-            username,
-            weight,
-            total_score,
-            sharpe_ratio,
-            strategy_type,
-            rebalanced_at
-        FROM polybot.v_psi_index_current
-        WHERE index_type = %(index_type)s
+            i.username,
+            i.proxy_address,
+            p.pseudonym,
+            i.weight,
+            i.total_score,
+            i.sharpe_ratio,
+            i.strategy_type,
+            i.rebalanced_at
+        FROM polybot.v_psi_index_current AS i
+        LEFT JOIN (
+            SELECT proxy_address, pseudonym
+            FROM polybot.aware_trader_profiles FINAL
+        ) AS p ON i.proxy_address = p.proxy_address
+        WHERE i.index_type = %(index_type)s
+        ORDER BY i.weight DESC
         """
 
         result = client.query(query, parameters={'index_type': index_type})
@@ -1815,11 +1824,13 @@ async def get_fund_index(index_type: str = Query(default="PSI-10")):
             constituents.append({
                 'rank': i + 1,
                 'username': row[0],
-                'weight': round(float(row[1]) * 100, 2),  # As percentage
-                'smart_money_score': float(row[2]),
-                'sharpe_ratio': float(row[3]),
-                'strategy_type': row[4],
-                'rebalanced_at': row[5].isoformat() if row[5] else None
+                'proxy_address': row[1],
+                'pseudonym': row[2],
+                'weight': round(float(row[3]) * 100, 2),  # As percentage
+                'smart_money_score': float(row[4]),
+                'sharpe_ratio': float(row[5]),
+                'strategy_type': row[6],
+                'rebalanced_at': row[7].isoformat() if row[7] else None
             })
 
         return {

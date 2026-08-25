@@ -84,6 +84,8 @@ interface FundPosition {
 interface IndexConstituent {
   rank: number
   username: string
+  proxy_address: string
+  pseudonym: string
   weight: number
   total_score: number
   sharpe_ratio: number
@@ -101,6 +103,14 @@ const fundTypes = [
   { id: 'ALPHA-INSIDER', name: 'ALPHA-INSIDER', type: 'ACTIVE', description: 'Insider activity signals' },
   { id: 'ALPHA-EDGE', name: 'ALPHA-EDGE', type: 'ACTIVE', description: 'ML edge predictions' },
 ]
+
+// username is often empty; fall back to the pseudonym, then the address.
+function constituentName(c: IndexConstituent): string {
+  if (c.username) return c.username
+  if (c.pseudonym) return c.pseudonym
+  if (c.proxy_address) return `${c.proxy_address.slice(0, 6)}...${c.proxy_address.slice(-4)}`
+  return `Trader #${c.rank}`
+}
 
 function FundPageContent() {
   const searchParams = useSearchParams()
@@ -176,6 +186,8 @@ function FundPageContent() {
             const mappedConstituents = (indexData.constituents || []).map((c: any) => ({
               rank: c.rank,
               username: c.username,
+              proxy_address: c.proxy_address,
+              pseudonym: c.pseudonym,
               weight: c.weight / 100,
               total_score: c.smart_money_score,
               sharpe_ratio: c.sharpe_ratio,
@@ -599,10 +611,10 @@ function FundPageContent() {
                         <div className="flex items-center gap-3">
                           <span className="text-slate-500 font-medium w-6">{i + 1}</span>
                           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white text-sm font-bold">
-                            {c.username ? c.username.charAt(0).toUpperCase() : '#'}
+                            {constituentName(c).charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <p className="text-white font-medium">{c.username || `Trader #${c.rank}`}</p>
+                            <p className="text-white font-medium">{constituentName(c)}</p>
                             <p className="text-xs text-slate-500">{c.strategy_type}</p>
                           </div>
                         </div>
