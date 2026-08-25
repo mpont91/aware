@@ -202,7 +202,7 @@ services:
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api  # For client-side (browser)
+      NEXT_PUBLIC_API_URL: http://localhost:8000  # For client-side (browser)
       API_INTERNAL_URL: http://api:8000           # For server-side (Next.js rewrites)
     ports:
       - "3000:3000"
