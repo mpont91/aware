@@ -82,6 +82,7 @@ interface FundPosition {
 }
 
 interface IndexConstituent {
+  rank: number
   username: string
   weight: number
   total_score: number
@@ -173,6 +174,7 @@ function FundPageContent() {
           if (indexResponse.ok) {
             const indexData = await indexResponse.json()
             const mappedConstituents = (indexData.constituents || []).map((c: any) => ({
+              rank: c.rank,
               username: c.username,
               weight: c.weight / 100,
               total_score: c.smart_money_score,
@@ -593,14 +595,14 @@ function FundPageContent() {
                 ) : (
                   <div className="divide-y divide-slate-800 max-h-96 overflow-y-auto">
                     {constituents.map((c, i) => (
-                      <div key={c.username} className="p-4 hover:bg-slate-800/30 flex items-center justify-between">
+                      <div key={c.rank} className="p-4 hover:bg-slate-800/30 flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <span className="text-slate-500 font-medium w-6">{i + 1}</span>
                           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white text-sm font-bold">
-                            {c.username.charAt(0).toUpperCase()}
+                            {c.username ? c.username.charAt(0).toUpperCase() : '#'}
                           </div>
                           <div>
-                            <p className="text-white font-medium">{c.username}</p>
+                            <p className="text-white font-medium">{c.username || `Trader #${c.rank}`}</p>
                             <p className="text-xs text-slate-500">{c.strategy_type}</p>
                           </div>
                         </div>
