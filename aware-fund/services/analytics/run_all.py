@@ -133,11 +133,15 @@ def run_psi_index_building(ch_client) -> dict:
         for index_type in INDEX_CONFIGS.keys():
             try:
                 index = builder.build_index(index_type)
+                # Persist so the Java fund services can read the constituents.
+                # Skip empty indices so a failed build doesn't wipe a good one.
+                saved = builder.save_index(index) if index.num_constituents else False
                 results[index_type.value] = {
                     'status': 'success',
-                    'constituents': index.num_constituents
+                    'constituents': index.num_constituents,
+                    'saved': saved
                 }
-                logger.info(f"Built {index_type.value}: {index.num_constituents} constituents")
+                logger.info(f"Built {index_type.value}: {index.num_constituents} constituents (saved={saved})")
             except Exception as e:
                 results[index_type.value] = {'status': 'error', 'error': str(e)}
                 logger.warning(f"Failed to build {index_type.value}: {e}")
