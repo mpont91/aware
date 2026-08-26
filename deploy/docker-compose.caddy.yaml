@@ -1,22 +1,17 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# Overlay for serving AWARE behind an existing Caddy on the host
+# Overlay for serving AWARE behind a reverse proxy on the host
 # ═══════════════════════════════════════════════════════════════════════════
 # Use together with the production compose file:
 #
 #   docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d
 #
-# It does two things:
-#   - keeps the bundled nginx from starting, since Caddy already owns 80/443
-#   - passes the public URL into the web image at build time, which is the only
-#     point where Next.js can inline it into the client bundle
-#
-# Everything else stays as in docker-compose.prod.yaml, including binding every
-# service to 127.0.0.1 so only Caddy can reach them.
+# Keeps the bundled nginx from starting, because the host's Caddy already owns
+# 80/443, and points the dashboard at same-origin API calls so the proxy only
+# has to forward one port.
 # ═══════════════════════════════════════════════════════════════════════════
 
 services:
-  # Parked behind a profile that is never enabled, so it stays defined but
-  # never starts. Caddy on the host terminates TLS instead.
+  # Parked behind a profile that is never enabled: still defined, never starts.
   nginx:
     profiles:
       - unused-nginx
@@ -24,13 +19,14 @@ services:
   web:
     build:
       args:
-        # Same origin as the dashboard: the browser then sends the basic auth
-        # credentials to the API too, and there is no CORS to deal with.
-        NEXT_PUBLIC_API_URL: "https://${AWARE_DOMAIN:?set AWARE_DOMAIN}"
+        # Empty on purpose. The browser then calls /api/... on the current
+        # origin and next.config.js rewrites it to the API container, so the
+        # domain never gets compiled into the client bundle and Caddy needs a
+        # single reverse_proxy line.
+        NEXT_PUBLIC_API_URL: ""
+        # next.config.js resolves its rewrites at build time as well.
+        API_INTERNAL_URL: http://api:8000
     environment:
-      # Already inlined at build time; repeated here only so the two values
-      # don't contradict each other when someone reads the config.
-      NEXT_PUBLIC_API_URL: "https://${AWARE_DOMAIN:?set AWARE_DOMAIN}"
-      # Server-side rewrites in next.config.js talk to the API over the
-      # compose network, not through Caddy.
+      NEXT_PUBLIC_API_URL: ""
+      # Where those rewrites actually go, over the compose network.
       API_INTERNAL_URL: http://api:8000

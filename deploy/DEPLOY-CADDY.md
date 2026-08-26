@@ -12,10 +12,13 @@ behind an unused profile so it never starts.
 Only Caddy listens publicly. Every container binds to `127.0.0.1`, and
 ClickHouse and Redpanda publish no host ports at all.
 
+Caddy forwards a single port. The dashboard rewrites `/api/*` to the API over
+the compose network itself, so the API needs no route of its own.
+
 | | reachable from internet |
 |---|---|
 | dashboard (`/`) | yes, behind basic auth |
-| AWARE API (`/api/*`) | yes, behind basic auth |
+| AWARE API (`/api/*`, through the dashboard) | yes, behind basic auth |
 | Grafana, Prometheus | no — SSH tunnel |
 | Java services, ClickHouse, Redpanda | no |
 
@@ -77,13 +80,7 @@ aware.tudominio.com {
 		tu_usuario $2a$14$...el.hash.que.acabas.de.generar...
 	}
 
-	handle /api/* {
-		reverse_proxy 127.0.0.1:8000
-	}
-
-	handle {
-		reverse_proxy 127.0.0.1:3000
-	}
+	reverse_proxy localhost:3000
 }
 ```
 
@@ -103,9 +100,9 @@ cd /opt/aware/deploy
 docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d --build
 ```
 
-The `--build` matters on the first run and after any change to `AWARE_DOMAIN`:
-`NEXT_PUBLIC_API_URL` is compiled into the dashboard's client bundle, so
-changing the domain means rebuilding the web image, not just restarting it.
+`--build` is needed on the first run and after pulling changes. The domain is
+*not* compiled into the image — the dashboard uses same-origin `/api/...` calls
+— so changing `AWARE_DOMAIN` only means editing the Caddyfile and reloading.
 
 ## 5. Apply the ClickHouse schema
 
@@ -120,7 +117,8 @@ scripts/clickhouse/apply-init.sh
 # should be 401 without credentials
 curl -o /dev/null -s -w '%{http_code}\n' https://aware.tudominio.com/api/leaderboard
 
-# should be 200 with them
+# should be 200 with them, both for pages and for the API
+curl -o /dev/null -s -w '%{http_code}\n' -u tu_usuario https://aware.tudominio.com/
 curl -o /dev/null -s -w '%{http_code}\n' -u tu_usuario https://aware.tudominio.com/api/leaderboard
 
 # nothing but 80/443 should answer from outside
@@ -128,8 +126,10 @@ nmap -Pn aware.tudominio.com
 ```
 
 Then open the dashboard, enter the credentials, and check that the leaderboard
-loads. If the page renders but the data does not, the client bundle was built
-with the wrong URL — rebuild with `--build`.
+loads. If the pages render but the data does not, the web image was built
+without `API_INTERNAL_URL`: `next.config.js` resolves its rewrite target at
+build time, so the proxy would be pointing at `localhost:8000` inside the
+container. Rebuild with `--build`.
 
 ## Reaching Grafana
 
@@ -159,5 +159,9 @@ docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d --
   `/api/fund/pause`. They sit behind the same basic auth as everything else,
   which is the only thing stopping a stranger from pausing your funds.
 - **`ALLOWED_ORIGINS` in `main.py` is hardcoded to localhost.** It does not
-  affect this setup because the dashboard and API share an origin, so no CORS
-  check happens. It would matter if you ever served them from different hosts.
+  affect this setup: the browser only ever talks to the dashboard's origin, so
+  no CORS check happens. It would matter if you published the API separately.
+- **Both `NEXT_PUBLIC_API_URL` and `API_INTERNAL_URL` are build-time values**
+  for the web image. Next.js inlines the first into the client bundle and
+  evaluates the second while resolving `next.config.js` rewrites. Setting
+  either only in `environment:` has no effect.

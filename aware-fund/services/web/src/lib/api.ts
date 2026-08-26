@@ -321,7 +321,10 @@ export interface DataFreshness {
   recommendation: string
 }
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+// Empty string means same-origin: the browser calls /api/... and next.config.js
+// rewrites it to the API internally, so a reverse proxy only needs to forward
+// this app's port. Uses ?? so an explicit "" is honoured, unlike ||.
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
 
 function toNumber(value: unknown, fallback = 0): number {
   const num = typeof value === 'number' ? value : Number(value)

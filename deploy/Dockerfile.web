@@ -18,6 +18,11 @@ COPY aware-fund/services/web/ .
 # no effect and leaves the dashboard calling http://localhost:8000.
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# next.config.js is evaluated during the build too, so the rewrite target has
+# to be known here. Passing it only at runtime leaves the proxy pointing at
+# localhost:8000 inside the container, where nothing is listening.
+ARG API_INTERNAL_URL
+ENV API_INTERNAL_URL=$API_INTERNAL_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
