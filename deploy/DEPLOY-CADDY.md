@@ -30,6 +30,15 @@ git clone git@github.com:mpont91/aware.git /opt/aware
 cd /opt/aware/deploy
 ```
 
+ClickHouse applies `analytics-service/clickhouse/init/*.sql` by itself on its
+first start, so there is no schema step to run. It only happens while the data
+volume is empty; to reapply later, drop the volume or run the statements by
+hand.
+
+Sizing: the stack idles around **5 GB of RAM** and grows with ingested data.
+8 GB is the practical floor, 16 GB comfortable. ClickHouse and Redpanda are
+the heavy ones.
+
 Create `/opt/aware/deploy/.env`:
 
 ```bash
@@ -104,14 +113,7 @@ docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d --
 *not* compiled into the image — the dashboard uses same-origin `/api/...` calls
 — so changing `AWARE_DOMAIN` only means editing the Caddyfile and reloading.
 
-## 5. Apply the ClickHouse schema
-
-```bash
-cd /opt/aware
-scripts/clickhouse/apply-init.sh
-```
-
-## 6. Verify
+## 5. Verify
 
 ```bash
 # should be 401 without credentials
