@@ -1,0 +1,20 @@
+<!--
+  Lets the default user connect from other containers.
+
+  Deliberately NOT named default-user.xml: the image's entrypoint writes that
+  exact filename when CLICKHOUSE_USER/CLICKHOUSE_PASSWORD are set, and a
+  read-only mount there makes the container fail to start. Everything in
+  users.d is loaded regardless of filename, so this merges with the file the
+  entrypoint generates.
+-->
+<clickhouse>
+  <users>
+    <default>
+      <networks>
+        <ip>::/0</ip>
+        <ip>0.0.0.0/0</ip>
+      </networks>
+    </default>
+  </users>
+</clickhouse>
+
