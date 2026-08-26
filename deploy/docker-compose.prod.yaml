@@ -193,7 +193,10 @@ services:
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      # curl is not in the image; python is. The local compose file already
+      # does it this way. 127.0.0.1 rather than localhost for the same reason
+      # as the web service.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
