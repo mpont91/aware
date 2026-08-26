@@ -27,7 +27,7 @@ the compose network itself, so the API needs no route of its own.
 ```bash
 sudo mkdir -p /opt/aware && sudo chown "$USER" /opt/aware
 git clone git@github.com:mpont91/aware.git /opt/aware
-cd /opt/aware/deploy
+cd /opt/aware
 ```
 
 ClickHouse applies `analytics-service/clickhouse/init/*.sql` by itself on its
@@ -39,10 +39,13 @@ Sizing: the stack idles around **5 GB of RAM** and grows with ingested data.
 8 GB is the practical floor, 16 GB comfortable. ClickHouse and Redpanda are
 the heavy ones.
 
-Create `/opt/aware/deploy/.env`:
+Create `.env` in the repo root (`/opt/aware/.env`) — both the Makefile and the
+production compose files read it from there:
 
 ```bash
-AWARE_DOMAIN=aware.tudominio.com
+SERVER_USER=tu_usuario
+SERVER_IP=1.2.3.4
+PROJECT_PATH=/opt/aware
 
 # Trading stays simulated. Switch to LIVE only after the P&L numbers in
 # aware_strategy_pnl justify it.
@@ -66,10 +69,14 @@ POLYMARKET_PRIVATE_KEY=unused-in-paper
 chmod 600 .env
 ```
 
+`SERVER_*` and `PROJECT_PATH` are only read by `make deploy`/`make ssh` from
+your own machine; they do no harm in the server's copy.
+
 ## 2. Point the domain at the server
 
-An `A` record for `AWARE_DOMAIN` to the server's public IP. Caddy needs this
-resolving before it can get a certificate.
+An `A` record for your domain to the server's public IP. Caddy needs this
+resolving before it can get a certificate. The domain is configured only in the
+Caddyfile — nothing in the stack needs to know its own hostname.
 
 ## 3. Configure Caddy
 
@@ -105,13 +112,14 @@ Caddy requests the certificate on first request. No certbot, no renewal cron.
 ## 4. Start the stack
 
 ```bash
-cd /opt/aware/deploy
-docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d --build
+cd /opt/aware
+make prod-up
 ```
 
-`--build` is needed on the first run and after pulling changes. The domain is
-*not* compiled into the image — the dashboard uses same-origin `/api/...` calls
-— so changing `AWARE_DOMAIN` only means editing the Caddyfile and reloading.
+That runs the compose files from the repo root so `.env` is picked up, builds
+the images, and prunes the old ones. `--build` matters on the first run and
+after pulling changes. Changing the domain never needs a rebuild: it lives in
+the Caddyfile, and the dashboard calls its own origin.
 
 ## 5. Verify
 
@@ -145,12 +153,17 @@ Then open `http://localhost:3001`.
 
 ## Updating
 
+From your laptop, one command:
+
 ```bash
-cd /opt/aware
-git pull origin main
-cd deploy
-docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d --build
+make deploy
 ```
+
+It SSHes in, pulls and restarts (`make prod-up` on the server). Needs
+`SERVER_USER`, `SERVER_IP` and `PROJECT_PATH` in your local `.env`.
+
+`make ssh` drops you into a shell in the project directory on the server.
+Once there, `make prod-logs`, `make prod-status` and `make prod-down` work.
 
 ## Notes
 

@@ -7,10 +7,19 @@
 # Run 'make help' to see all available targets
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help local up down build logs status clean deploy-dev deploy-prod test
+.PHONY: help local up down build logs status clean ssh deploy prod-up prod-down prod-logs test
+
+# Read configuration from .env in the repo root. Optional, so targets that
+# don't need it still work on a fresh clone.
+-include .env
 
 # Default target
 .DEFAULT_GOAL := help
+
+# Production stack: the compose files live in deploy/ but are always run from
+# the repo root, so .env sits where you'd expect it. Compose resolves the paths
+# inside them relative to their own directory, so this is safe.
+PROD_COMPOSE := --env-file .env -f deploy/docker-compose.prod.yaml -f deploy/docker-compose.caddy.yaml
 
 # Colors
 GREEN  := $(shell tput -Txterm setaf 2)
@@ -34,6 +43,10 @@ help: ## Show this help
 	@echo '${YELLOW}ML Training:${RESET}'
 	@echo '  ${BLUE}make train${RESET}       Quick (10K traders, ~8 min)'
 	@echo '  ${BLUE}make train-all${RESET}   All eligible traders (currently ~4K)'
+	@echo ''
+	@echo '${YELLOW}Deployment:${RESET}'
+	@echo '  ${BLUE}make deploy${RESET}      Pull and restart on the server'
+	@echo '  ${BLUE}make ssh${RESET}         Shell on the server, in the project dir'
 	@echo ''
 	@echo '${YELLOW}Other:${RESET}'
 	@echo '  ${BLUE}make analytics${RESET}   Run analytics only'
@@ -203,25 +216,30 @@ web-build: ## Build web dashboard for production
 # SERVER DEPLOYMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-deploy-dev: ## Deploy to development server
-	@echo '${GREEN}Deploying to DEV server...${RESET}'
-	ssh aware-dev 'cd /opt/aware && git pull && make server-restart ENV=dev'
+require-server:
+	@if [ -z "$(SERVER_USER)" ] || [ -z "$(SERVER_IP)" ] || [ -z "$(PROJECT_PATH)" ]; then \
+		echo '${YELLOW}Set SERVER_USER, SERVER_IP and PROJECT_PATH in .env${RESET}'; exit 1; fi
 
-deploy-prod: ## Deploy to production server (requires confirmation)
-	@echo '${YELLOW}⚠️  You are about to deploy to PRODUCTION${RESET}'
-	@read -p "Type 'yes' to confirm: " confirm && [ "$$confirm" = "yes" ] || exit 1
-	@echo '${GREEN}Deploying to PROD server...${RESET}'
-	ssh aware-prod 'cd /opt/aware && git pull && make server-restart ENV=prod'
+ssh: require-server ## Open a shell on the server, in the project directory
+	ssh $(SERVER_USER)@$(SERVER_IP) -t "cd $(PROJECT_PATH) && bash"
 
-server-restart: ## Restart services on server (used by deploy)
-	docker compose -f deploy/docker-compose.$(ENV).yaml build
-	docker compose -f deploy/docker-compose.$(ENV).yaml up -d
+deploy: require-server ## Pull and restart on the server (one command)
+	ssh $(SERVER_USER)@$(SERVER_IP) "cd $(PROJECT_PATH) && git pull && make prod-up"
 
-server-logs: ## View server logs
-	docker compose -f deploy/docker-compose.$(ENV).yaml logs -f --tail=100
+# ── Run on the server itself ──────────────────────────────────────────────────
+# --build because this project builds its images rather than pulling them.
+prod-up: ## Build and start the production stack (run on the server)
+	docker compose $(PROD_COMPOSE) up -d --build
+	docker image prune -f
 
-server-status: ## Check server status
-	docker compose -f deploy/docker-compose.$(ENV).yaml ps
+prod-down: ## Stop the production stack (run on the server)
+	docker compose $(PROD_COMPOSE) down
+
+prod-logs: ## Follow production logs (usage: make prod-logs SERVICE=api)
+	docker compose $(PROD_COMPOSE) logs -f $(SERVICE)
+
+prod-status: ## Check production service status (run on the server)
+	docker compose $(PROD_COMPOSE) ps
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # UTILITIES
