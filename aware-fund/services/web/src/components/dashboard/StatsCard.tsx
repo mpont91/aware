@@ -11,6 +11,10 @@ interface StatsCardProps {
   trend?: {
     value: number
     isPositive: boolean
+    /** Render value as a percentage. Off by default: a plain count is not one. */
+    isPercentage?: boolean
+    /** What the value refers to, e.g. "in the last 24h". */
+    label?: string
   }
   description?: string
   className?: string
@@ -57,9 +61,13 @@ export function StatsCard({
               trend.isPositive ? 'text-green-400' : 'text-red-400'
             )}
           >
-            {trend.isPositive ? '+' : ''}{trend.value}%
+            {trend.isPositive ? '+' : ''}
+            {trend.value.toLocaleString()}
+            {trend.isPercentage ? '%' : ''}
           </span>
-          <span className="text-xs text-slate-500">vs last period</span>
+          <span className="text-xs text-slate-500">
+            {trend.label ?? 'vs last period'}
+          </span>
         </div>
       )}
 

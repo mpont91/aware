@@ -123,14 +123,14 @@ export default function DashboardPage() {
           title="Tracked Traders"
           value={formatNumber(displayStats.total_traders, 0)}
           icon={Users}
-          trend={displayStats.traders_24h > 0 ? { value: displayStats.traders_24h, isPositive: true } : undefined}
+          trend={displayStats.traders_24h > 0 ? { value: displayStats.traders_24h, isPositive: true, label: 'in the last 24h' } : undefined}
           description="With scored activity"
         />
         <StatsCard
           title="Total Trades"
           value={formatNumber(displayStats.total_trades, 0)}
           icon={Activity}
-          trend={displayStats.trades_24h > 0 ? { value: displayStats.trades_24h, isPositive: true } : undefined}
+          trend={displayStats.trades_24h > 0 ? { value: displayStats.trades_24h, isPositive: true, label: 'in the last 24h' } : undefined}
           description="Ingested trades"
         />
         <StatsCard
