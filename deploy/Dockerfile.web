@@ -13,6 +13,11 @@ RUN npm ci
 COPY aware-fund/services/web/ .
 
 # Build
+# NEXT_PUBLIC_* is inlined into the client bundle at build time, so the public
+# API URL has to be known here. Setting it only in the runtime environment has
+# no effect and leaves the dashboard calling http://localhost:8000.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
