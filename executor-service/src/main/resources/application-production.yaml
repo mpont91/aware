@@ -1,0 +1,72 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Executor — production profile
+# ═══════════════════════════════════════════════════════════════════════════
+# Without this file the production profile falls back to application.yaml,
+# which carries only auth placeholders. The paper exchange simulator would be
+# off, so no simulated order would ever fill and no P&L would exist.
+#
+# Same simulator settings as develop, with ClickHouse reached over the compose
+# network instead of 127.0.0.1.
+# ═══════════════════════════════════════════════════════════════════════════
+
+hft:
+  # PAPER simulates fills against the live book. LIVE trades real money and
+  # needs a funded wallet in POLYMARKET_PRIVATE_KEY.
+  mode: ${HFT_MODE:PAPER}
+  events:
+    enabled: true
+  polymarket:
+    market-ws-enabled: true
+    auth:
+      auto-create-or-derive-api-creds: false
+
+logging:
+  level:
+    com.polybot.hft: INFO
+
+executor:
+  sim:
+    # The paper exchange. Turning this off means orders are accepted and never
+    # fill, which looks like a working system producing no trades.
+    enabled: ${EXECUTOR_SIM_ENABLED:true}
+    fills-enabled: true
+    fill-poll-millis: 250
+    tob-max-age-millis: 5000
+    maker-fill-min-age-millis: 250
+    lead-lag-min-millis: 50
+    maker-fill-probability-per-poll: 0.035
+    maker-fill-probability-multiplier-per-tick: 1.8
+    maker-fill-probability-max-per-poll: 0.15
+    maker-fill-fraction-of-remaining: 1.00
+    maker-queue-factor-min: 0.10
+    maker-queue-factor-max: 0.12
+    trade-tape-enabled: true
+    trade-tape-source: CLICKHOUSE_MARKET_WS_TRADES
+    trade-tape-poll-millis: 500
+    trade-tape-limit: 50
+    trade-tape-use-trade-timestamp: false
+    trade-tape-fallback-enabled: true
+    trade-tape-fallback-max-idle-millis: 1500
+    trade-tape-fallback-probability-scale: 0.60
+    trade-tape-bid-delta-cancel-scale: 0.25
+    trade-tape-bid-delta-max-trade-lag-millis: 2000
+    # Service name, not 127.0.0.1: ClickHouse is a separate container here.
+    trade-tape-clickhouse-url: ${EXECUTOR_CLICKHOUSE_URL:http://clickhouse:8123}
+    trade-tape-clickhouse-database: ${CLICKHOUSE_DATABASE:polybot}
+    trade-tape-clickhouse-user: ${CLICKHOUSE_USER:default}
+    trade-tape-clickhouse-password: ${CLICKHOUSE_PASSWORD:}
+    trade-tape-clickhouse-lookback-seconds: 60
+
+  onchain:
+    rpc-url: ${POLYGON_RPC_URL:https://polygon-rpc.com}
+    proxy-wallet-factory-address: ""
+
+  # On-chain redemption. Off by default: it signs real transactions.
+  settlement:
+    enabled: ${EXECUTOR_SETTLEMENT_ENABLED:false}
+    dry-run: ${EXECUTOR_SETTLEMENT_DRY_RUN:true}
+    poll-interval-millis: 30000
+    min-merge-shares: 10
+    max-retries: 3
+    merge-only-near-end: true
+    merge-seconds-before-end: 600

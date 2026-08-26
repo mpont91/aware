@@ -1,0 +1,87 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Ingestor — production profile
+# ═══════════════════════════════════════════════════════════════════════════
+# Without this file the production profile falls back to application.yaml,
+# which sets only the service name and port. Every ingestion feature lived in
+# application-develop.yaml, so the service started, logged nothing useful and
+# collected no data at all — no global trades, no market data, no Polygon.
+#
+# Same feature set as develop, with the connection details taken from the
+# environment so the container talks to ClickHouse over the compose network.
+# ═══════════════════════════════════════════════════════════════════════════
+
+hft:
+  events:
+    enabled: true
+    market-ws-cache-publish-on-start: true
+    market-ws-snapshot-publish-millis: 1000
+  polymarket:
+    market-ws-enabled: true
+    market-ws-cache-path: .cache/ws/market-ws-cache.ingestor.json
+    market-ws-cache-flush-millis: 5000
+
+ingestor:
+  clickhouse:
+    # Own variable on purpose: the compose file sets CLICKHOUSE_URL to a JDBC
+    # string for the other services, and this client needs a plain HTTP URL.
+    url: ${INGESTOR_CLICKHOUSE_URL:http://clickhouse:8123}
+    database: ${CLICKHOUSE_DATABASE:polybot}
+    user: ${CLICKHOUSE_USER:default}
+    password: ${CLICKHOUSE_PASSWORD:}
+    timeout-seconds: 10
+
+  # Target trader for the replication research feeds. Optional: without it the
+  # service logs a warning and skips only that ingestor.
+  polymarket:
+    username: ${POLYMARKET_TARGET_USER:}
+
+  polling:
+    enabled: ${INGESTOR_POLLING_ENABLED:true}
+    backfill-on-start: false
+    page-size: 500
+
+  polygon:
+    enabled: ${INGESTOR_POLYGON_ENABLED:true}
+    rpc-url: ${POLYGON_RPC_URL:https://polygon-rpc.com}
+    poll-interval-millis: 100
+    max-receipts-per-poll: 25
+    request-delay-millis: 100
+    receipt-workers: 4
+    block-timestamp-cache-size: 50000
+    backfill:
+      enabled: true
+      interval-seconds: 30
+      batch-size: 250
+      request-delay-millis: 0
+
+  market-ws:
+    enabled: ${INGESTOR_MARKET_WS_ENABLED:true}
+    discovery-interval-seconds: 30
+    lookback-15m-minutes: 30
+    lookahead-15m-minutes: 15
+    lookback-1h-hours: 2
+    lookahead-1h-hours: 1
+    request-delay-millis: 100
+
+  market-context:
+    enabled: ${INGESTOR_MARKET_CONTEXT_ENABLED:true}
+    market-trades-limit: 50
+    market-trades-min-interval-seconds: 10
+    clob-book-min-interval-seconds: 1
+    gamma-min-interval-seconds: 60
+    gamma-poll-interval-seconds: 60
+    gamma-poll-lookahead-seconds: 3600
+    gamma-poll-max-idle-seconds: 21600
+    request-delay-millis: 100
+    max-tracked-markets: 500
+    on-trade-context-max-age-seconds: 300
+
+  # The feed the Smart Money Index is built from. Everything downstream —
+  # scoring, PSI indices, the fund mirror — is empty without it.
+  global-trades:
+    enabled: ${INGESTOR_GLOBAL_TRADES_ENABLED:true}
+    poll-interval-seconds: 30
+    page-size: 500
+    request-delay-millis: 100
+    backfill-on-start: false
+    backfill-max-pages: 100
