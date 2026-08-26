@@ -1,30 +1,29 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# AWARE — Caddy site config
+# AWARE — Caddy config
 # ═══════════════════════════════════════════════════════════════════════════
-# Reference snippet to copy into /etc/caddy/Caddyfile on the host. Caddy runs
-# as a normal system service; nothing here is containerised.
+# Mounted into the caddy container by docker-compose.caddy.yaml. Values come
+# from .env in the repo root, so this file needs no editing to deploy.
 #
-# Only the dashboard's port is proxied. It rewrites /api/* to the API over the
-# compose network by itself (see next.config.js), so the API needs no route of
-# its own. Everything else binds to 127.0.0.1 and stays unreachable.
+# Caddy obtains and renews the certificate itself on first request. Nothing to
+# run beforehand and nothing to schedule afterwards.
 #
-# Setup:
-#   caddy hash-password        # paste the bcrypt hash below
-#   caddy validate --config /etc/caddy/Caddyfile
-#   systemctl reload caddy
+# Only the dashboard is proxied: it rewrites /api/* to the API over the compose
+# network by itself (next.config.js), so the API needs no route of its own and
+# stays unreachable from outside.
 # ═══════════════════════════════════════════════════════════════════════════
 
-aware.example.com {
+{$AWARE_DOMAIN} {
 	encode gzip
 
-	# Covers the dashboard and, through it, the API. Generate the hash with
-	# `caddy hash-password` — never a plaintext password here.
-	# On Caddy older than 2.8 the directive is `basicauth`.
+	# Covers the dashboard and, through it, the API. Same origin, so the
+	# browser sends the credentials to both and there is no CORS to configure.
 	basic_auth {
-		your_user $2a$14$replace.this.with.the.generated.hash
+		{$AWARE_USER} {$AWARE_PASSWORD_HASH}
 	}
 
-	reverse_proxy localhost:3000
+	# Service name on the compose network, not localhost: Caddy runs in its
+	# own container.
+	reverse_proxy web:3000
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -35,7 +34,7 @@ aware.example.com {
 	}
 
 	log {
-		output file /var/log/caddy/aware.log
+		output stdout
 		format json
 	}
 }
@@ -43,6 +42,6 @@ aware.example.com {
 # ═══════════════════════════════════════════════════════════════════════════
 # Deliberately not routed
 # ═══════════════════════════════════════════════════════════════════════════
-# Grafana (127.0.0.1:3001) and Prometheus (127.0.0.1:9090) are reachable over
-# an SSH tunnel instead:  ssh -L 3001:127.0.0.1:3001 user@server
+# Grafana and Prometheus. They stay on 127.0.0.1 and are reachable over an SSH
+# tunnel:  ssh -L 3001:127.0.0.1:3001 user@server
 # Every route published here is another way in.

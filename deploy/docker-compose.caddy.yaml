@@ -1,13 +1,19 @@
 # ═══════════════════════════════════════════════════════════════════════════
-# Overlay for serving AWARE behind a reverse proxy on the host
+# Caddy overlay — self-contained HTTPS for a dedicated server
 # ═══════════════════════════════════════════════════════════════════════════
 # Use together with the production compose file:
 #
 #   docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d
 #
-# Keeps the bundled nginx from starting, because the host's Caddy already owns
-# 80/443, and points the dashboard at same-origin API calls so the proxy only
-# has to forward one port.
+# Replaces the bundled nginx with Caddy in a container. Nothing has to be
+# installed or configured on the host: Caddy obtains and renews the TLS
+# certificate on its own, so there is no certbot step and no renewal to
+# remember, and the domain comes from .env rather than being baked into a
+# config file.
+#
+# Assumes the server is dedicated to AWARE, since this claims ports 80 and 443.
+# To run alongside an existing reverse proxy, drop this overlay and point that
+# proxy at WEB_PORT instead.
 # ═══════════════════════════════════════════════════════════════════════════
 
 services:
@@ -16,17 +22,41 @@ services:
     profiles:
       - unused-nginx
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: aware-caddy
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AWARE_DOMAIN: ${AWARE_DOMAIN:?set AWARE_DOMAIN in .env}
+      AWARE_USER: ${AWARE_USER:-admin}
+      # Generate with: docker run --rm caddy:2-alpine caddy hash-password
+      # Wrap it in single quotes in .env, or compose eats the $ segments.
+      AWARE_PASSWORD_HASH: ${AWARE_PASSWORD_HASH:?set AWARE_PASSWORD_HASH in .env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Without this volume Caddy would request new
+      # ones on every recreate and hit Let's Encrypt's rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
   web:
     build:
       args:
-        # Empty on purpose. The browser then calls /api/... on the current
-        # origin and next.config.js rewrites it to the API container, so the
-        # domain never gets compiled into the client bundle and Caddy needs a
-        # single reverse_proxy line.
+        # Empty on purpose: the browser calls /api/... on the current origin and
+        # next.config.js rewrites it to the API, so Caddy proxies a single
+        # service and the domain never gets compiled into the client bundle.
         NEXT_PUBLIC_API_URL: ""
         # next.config.js resolves its rewrites at build time as well.
         API_INTERNAL_URL: http://api:8000
     environment:
       NEXT_PUBLIC_API_URL: ""
-      # Where those rewrites actually go, over the compose network.
       API_INTERNAL_URL: http://api:8000
+
+volumes:
+  caddy_data:
+  caddy_config:

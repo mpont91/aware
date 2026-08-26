@@ -1,19 +1,28 @@
-# Deploying AWARE behind Caddy
+# Deploying AWARE
 
-Runs the stack in production on a single server, with the dashboard and API
-served over HTTPS behind HTTP basic auth. Assumes Caddy is already installed on
-the host and owns ports 80/443.
+Runs the whole stack on a dedicated server, served over HTTPS behind HTTP basic
+auth. Everything is containerised, including the reverse proxy: nothing has to
+be installed or configured on the host beyond Docker.
 
-The bundled nginx service is not used. `docker-compose.caddy.yaml` parks it
-behind an unused profile so it never starts.
+Caddy obtains and renews the TLS certificate itself, so there is no certbot
+step and no renewal to schedule. The domain comes from `.env` rather than being
+baked into a config file.
+
+Assumes the server is dedicated to AWARE — the Caddy container claims ports 80
+and 443. To run alongside an existing proxy, see [Sharing a server](#sharing-a-server).
+
+## Requirements
+
+The stack idles around **4 GB of RAM** and grows with ingested data. 8 GB is a
+sensible floor; ClickHouse and Redpanda are the heavy ones.
+
+Disk: ClickHouse uses roughly **1 GB per day** of continuous ingestion, so size
+it for how much history you want. 60 GB is a reasonable start.
 
 ## What ends up exposed
 
-Only Caddy listens publicly. Every container binds to `127.0.0.1`, and
-ClickHouse and Redpanda publish no host ports at all.
-
-Caddy forwards a single port. The dashboard rewrites `/api/*` to the API over
-the compose network itself, so the API needs no route of its own.
+Only the Caddy container publishes to the internet. Every other service binds
+to `127.0.0.1`, and Caddy reaches them over the compose network.
 
 | | reachable from internet |
 |---|---|
@@ -22,7 +31,12 @@ the compose network itself, so the API needs no route of its own.
 | Grafana, Prometheus | no — SSH tunnel |
 | Java services, ClickHouse, Redpanda | no |
 
-## 1. Clone and configure
+## 1. Point the domain at the server
+
+An `A` record to the server's public IP. Caddy needs it resolving before it can
+obtain a certificate.
+
+## 2. Clone
 
 ```bash
 sudo mkdir -p /opt/aware && sudo chown "$USER" /opt/aware
@@ -30,35 +44,34 @@ git clone git@github.com:mpont91/aware.git /opt/aware
 cd /opt/aware
 ```
 
-ClickHouse applies `analytics-service/clickhouse/init/*.sql` by itself on its
-first start, so there is no schema step to run. It only happens while the data
-volume is empty; to reapply later, drop the volume or run the statements by
-hand.
+## 3. Configure
 
-Sizing: the stack idles around **5 GB of RAM** and grows with ingested data.
-8 GB is the practical floor, 16 GB comfortable. ClickHouse and Redpanda are
-the heavy ones.
-
-Create `.env` in the repo root (`/opt/aware/.env`) — both the Makefile and the
-production compose files read it from there:
+Generate a password hash:
 
 ```bash
-SERVER_USER=tu_usuario
-SERVER_IP=1.2.3.4
-PROJECT_PATH=/opt/aware
+docker run --rm caddy:2-alpine caddy hash-password
+```
 
-# Trading stays simulated. Switch to LIVE only after the P&L numbers in
+Create `.env` in the repo root — the Makefile and the compose files both read
+it from there:
+
+```bash
+AWARE_DOMAIN=aware.tudominio.com
+AWARE_USER=tu_usuario
+AWARE_PASSWORD_HASH='$2a$14$...el.hash.generado...'
+
+# Trading stays simulated. Switch to LIVE only when the numbers in
 # aware_strategy_pnl justify it.
 HFT_MODE=PAPER
 
 CLICKHOUSE_USER=default
-CLICKHOUSE_PASSWORD=<long random string>
+CLICKHOUSE_PASSWORD=<openssl rand -base64 32>
 
 GRAFANA_USER=admin
-GRAFANA_PASSWORD=<long random string>
+GRAFANA_PASSWORD=<openssl rand -base64 32>
 
-# Required by the compose file even in PAPER mode. Leave as placeholders
-# until you actually go live; nothing reads them for simulated orders.
+# Required by the compose file even in PAPER mode; nothing reads them for
+# simulated orders.
 POLYMARKET_API_KEY=unused-in-paper
 POLYMARKET_API_SECRET=unused-in-paper
 POLYMARKET_PASSPHRASE=unused-in-paper
@@ -69,77 +82,53 @@ POLYMARKET_PRIVATE_KEY=unused-in-paper
 chmod 600 .env
 ```
 
-`SERVER_*` and `PROJECT_PATH` are only read by `make deploy`/`make ssh` from
-your own machine; they do no harm in the server's copy.
+**Keep the single quotes around the hash.** Without them compose reads the `$`
+segments of a bcrypt hash as variables and truncates it silently, and every
+login then fails.
 
-## 2. Point the domain at the server
-
-An `A` record for your domain to the server's public IP. Caddy needs this
-resolving before it can get a certificate. The domain is configured only in the
-Caddyfile — nothing in the stack needs to know its own hostname.
-
-## 3. Configure Caddy
-
-Generate a password hash — never store the plaintext:
+## 4. Deploy
 
 ```bash
-caddy hash-password
-```
-
-Add to `/etc/caddy/Caddyfile` (or import `deploy/caddy/Caddyfile`):
-
-```caddy
-aware.tudominio.com {
-	encode gzip
-
-	basic_auth {
-		tu_usuario $2a$14$...el.hash.que.acabas.de.generar...
-	}
-
-	reverse_proxy localhost:3000
-}
-```
-
-On Caddy older than 2.8 the directive is `basicauth`, not `basic_auth`.
-
-```bash
-caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
-
-Caddy requests the certificate on first request. No certbot, no renewal cron.
-
-## 4. Start the stack
-
-```bash
-cd /opt/aware
 make prod-up
 ```
 
-That runs the compose files from the repo root so `.env` is picked up, builds
-the images, and prunes the old ones. `--build` matters on the first run and
-after pulling changes. Changing the domain never needs a rebuild: it lives in
-the Caddyfile, and the dashboard calls its own origin.
+That is the whole deployment. It builds the images and starts everything; Caddy
+requests the certificate on the first request to your domain.
+
+ClickHouse applies `analytics-service/clickhouse/init/*.sql` by itself on first
+start, so there is no schema step. It only happens while the data volume is
+empty.
 
 ## 5. Verify
 
 ```bash
-# should be 401 without credentials
-curl -o /dev/null -s -w '%{http_code}\n' https://aware.tudominio.com/api/leaderboard
+# 401 without credentials
+curl -o /dev/null -s -w '%{http_code}\n' https://aware.tudominio.com/
 
-# should be 200 with them, both for pages and for the API
+# 200 with them, for both pages and API
 curl -o /dev/null -s -w '%{http_code}\n' -u tu_usuario https://aware.tudominio.com/
 curl -o /dev/null -s -w '%{http_code}\n' -u tu_usuario https://aware.tudominio.com/api/leaderboard
 
-# nothing but 80/443 should answer from outside
+# only 80 and 443 should answer from outside
 nmap -Pn aware.tudominio.com
 ```
 
-Then open the dashboard, enter the credentials, and check that the leaderboard
-loads. If the pages render but the data does not, the web image was built
-without `API_INTERNAL_URL`: `next.config.js` resolves its rewrite target at
-build time, so the proxy would be pointing at `localhost:8000` inside the
-container. Rebuild with `--build`.
+The dashboard starts empty and fills over the following hours as data arrives.
+Follow it with `make prod-logs SERVICE=ingestor`.
+
+## Updating
+
+From your own machine:
+
+```bash
+make deploy
+```
+
+SSHes in, pulls, rebuilds and restarts. Needs `SERVER_USER`, `SERVER_IP` and
+`PROJECT_PATH` in your local `.env`.
+
+`make ssh` opens a shell in the project directory on the server, where
+`make prod-logs`, `make prod-status` and `make prod-down` are available.
 
 ## Reaching Grafana
 
@@ -151,32 +140,29 @@ ssh -L 3001:127.0.0.1:3001 user@server
 
 Then open `http://localhost:3001`.
 
-## Updating
+## Sharing a server
 
-From your laptop, one command:
+If something else already owns 80/443, drop the Caddy overlay and let the
+existing proxy forward to `WEB_PORT`:
 
 ```bash
-make deploy
+docker compose --env-file .env -f deploy/docker-compose.prod.yaml up -d --build
 ```
 
-It SSHes in, pulls and restarts (`make prod-up` on the server). Needs
-`SERVER_USER`, `SERVER_IP` and `PROJECT_PATH` in your local `.env`.
-
-`make ssh` drops you into a shell in the project directory on the server.
-Once there, `make prod-logs`, `make prod-status` and `make prod-down` work.
+A single route to `localhost:3000` is enough there — the dashboard reaches the
+API itself. Note the bundled nginx service starts in that case and will fight
+for 80/443, so remove it or give it a profile.
 
 ## Notes
 
-- **Basic auth is only as safe as the transport.** Credentials go in a header on
-  every request, base64 encoded, which is fine over HTTPS and readable over
-  plain HTTP. Caddy redirects to HTTPS by default; do not disable that.
+- **Basic auth is only as safe as the transport.** Credentials travel in a
+  header on every request, base64 encoded: fine over HTTPS, readable over plain
+  HTTP. Caddy redirects to HTTPS by default; leave it that way.
 - **The API has two write endpoints**, `/api/fund/activate` and
-  `/api/fund/pause`. They sit behind the same basic auth as everything else,
-  which is the only thing stopping a stranger from pausing your funds.
-- **`ALLOWED_ORIGINS` in `main.py` is hardcoded to localhost.** It does not
-  affect this setup: the browser only ever talks to the dashboard's origin, so
-  no CORS check happens. It would matter if you published the API separately.
-- **Both `NEXT_PUBLIC_API_URL` and `API_INTERNAL_URL` are build-time values**
-  for the web image. Next.js inlines the first into the client bundle and
-  evaluates the second while resolving `next.config.js` rewrites. Setting
-  either only in `environment:` has no effect.
+  `/api/fund/pause`, behind the same basic auth as everything else.
+- **Certificates live in the `caddy_data` volume.** Do not prune it, or Caddy
+  re-requests certificates on every recreate and hits Let's Encrypt rate limits.
+- **`NEXT_PUBLIC_API_URL` and `API_INTERNAL_URL` are build-time values.**
+  Next.js inlines the first into the client bundle and resolves the second while
+  evaluating `next.config.js` rewrites. Setting either only in `environment:`
+  has no effect.
