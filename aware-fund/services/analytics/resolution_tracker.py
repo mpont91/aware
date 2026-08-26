@@ -123,60 +123,53 @@ class ResolutionTracker:
             logger.warning(f"Failed to get resolved IDs (table may not exist): {e}")
             return set()
 
+    # Batch size for condition_ids lookups. 40 ids keeps the query string
+    # around 3KB, well inside what the API and any proxy will accept.
+    CONDITION_ID_BATCH = 40
+
     def _fetch_resolved_markets(self, wanted_condition_ids: set[str]) -> list[MarketResolution]:
         """
-        Fetch all resolved markets from Gamma API and match with our condition IDs.
+        Fetch resolutions for the given condition IDs from the Gamma API.
 
-        The Gamma API doesn't support efficient condition_id filtering,
-        so we fetch resolved markets and match locally.
+        The API does support condition_ids filtering, but only returns closed
+        markets when closed=true is passed, and silently caps results at 20
+        unless limit is set. Missing either turns a direct lookup into an empty
+        response, which is why this used to page blindly through every closed
+        market on Polymarket instead: that walked thousands of unrelated markets
+        and died on a 422 past offset 2100, so most resolutions were never found.
         """
         resolutions = []
-        offset = 0
-        limit = 100  # Max per request
-        max_pages = 50  # Safety limit
+        wanted = sorted(wanted_condition_ids)
 
-        logger.info(f"Fetching resolved markets (looking for {len(wanted_condition_ids)} condition IDs)...")
+        logger.info(f"Fetching resolutions for {len(wanted)} condition IDs...")
 
-        for page in range(max_pages):
+        for start in range(0, len(wanted), self.CONDITION_ID_BATCH):
+            batch = wanted[start:start + self.CONDITION_ID_BATCH]
             try:
-                url = f"{self.GAMMA_API_BASE}/markets"
-                params = {
-                    "closed": "true",
-                    "limit": limit,
-                    "offset": offset,
-                    "order": "closedTime",
-                    "ascending": "false"
-                }
+                params = [
+                    ("closed", "true"),
+                    # must exceed the batch size or the API truncates silently
+                    ("limit", str(len(batch) + 10)),
+                ] + [("condition_ids", cid) for cid in batch]
 
-                response = self.http_client.get(url, params=params)
+                response = self.http_client.get(f"{self.GAMMA_API_BASE}/markets", params=params)
                 response.raise_for_status()
 
-                markets = response.json()
-                if not markets:
-                    break
+                for market in response.json():
+                    parsed = self._parse_market(market)
+                    if parsed and parsed.is_resolved:
+                        resolutions.append(parsed)
+                        logger.debug(f"Found resolution: {parsed.condition_id[:20]}... "
+                                     f"-> {parsed.winning_outcome}")
 
-                # Parse and match
-                for market in markets:
-                    condition_id = market.get("conditionId", "")
-                    if condition_id in wanted_condition_ids:
-                        parsed = self._parse_market(market)
-                        if parsed and parsed.is_resolved:
-                            resolutions.append(parsed)
-                            logger.debug(f"Found resolution: {condition_id[:20]}... -> {parsed.winning_outcome}")
-
-                offset += limit
                 time.sleep(0.2)  # Rate limiting
 
-                # Early exit if we found all we need
-                found_ids = {r.condition_id for r in resolutions}
-                if len(found_ids) >= len(wanted_condition_ids):
-                    break
-
             except Exception as e:
-                logger.warning(f"Error fetching markets page {page}: {e}")
-                break
+                # Skip this batch only; one bad id shouldn't stop the rest.
+                logger.warning(f"Error fetching resolutions for batch at {start}: {e}")
+                continue
 
-        logger.info(f"Fetched {len(resolutions)} matching resolved markets")
+        logger.info(f"Fetched {len(resolutions)} resolutions for {len(wanted)} requested")
         return resolutions
 
     def _fetch_single_market(self, condition_id: str) -> Optional[MarketResolution]:
