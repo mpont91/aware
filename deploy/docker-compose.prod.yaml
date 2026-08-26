@@ -187,6 +187,8 @@ services:
       CLICKHOUSE_DATABASE: polybot
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
+      # So the dashboard can label P&L as simulated or real.
+      HFT_MODE: ${HFT_MODE:-PAPER}
       API_HOST: 0.0.0.0
       API_PORT: 8000
       LOG_LEVEL: INFO

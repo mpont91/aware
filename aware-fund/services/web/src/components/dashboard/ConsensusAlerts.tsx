@@ -1,36 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Users, ArrowRight, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api, ConsensusSignal } from '@/lib/api'
 
-// Mock data
-const mockConsensus = [
-  {
-    id: 1,
-    market_question: 'Will Bitcoin reach $100K by March 2025?',
-    outcome: 'Yes',
-    consensus_level: 85,
-    traders_count: 12,
-    signal_strength: 'STRONG',
-  },
-  {
-    id: 2,
-    market_question: 'Will the Fed cut rates in January?',
-    outcome: 'No',
-    consensus_level: 72,
-    traders_count: 8,
-    signal_strength: 'MODERATE',
-  },
-  {
-    id: 3,
-    market_question: 'Will Trump win the Republican primary?',
-    outcome: 'Yes',
-    consensus_level: 91,
-    traders_count: 15,
-    signal_strength: 'STRONG',
-  },
-]
 
 const strengthColors: Record<string, string> = {
   STRONG: 'bg-green-500/20 text-green-400 border-green-500/30',
@@ -39,6 +14,29 @@ const strengthColors: Record<string, string> = {
 }
 
 export function ConsensusAlerts() {
+  const [signals, setSignals] = useState<ConsensusSignal[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    // Same thresholds as the dedicated page, so both agree on what counts as
+    // a signal instead of the dashboard showing more than the page behind it.
+    api
+      .getConsensusSignals(3, 5000, 48)
+      .then((res) => {
+        if (!cancelled) setSignals(res.signals.slice(0, 3))
+      })
+      .catch(() => {
+        if (!cancelled) setSignals([])
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden h-full">
       {/* Header */}
@@ -62,53 +60,53 @@ export function ConsensusAlerts() {
 
       {/* Signals List */}
       <div className="divide-y divide-slate-800">
-        {mockConsensus.map((signal) => (
-          <div
-            key={signal.id}
-            className="p-4 hover:bg-slate-800/50 transition-colors"
-          >
-            <div className="flex items-start justify-between gap-3 mb-2">
-              <p className="text-sm text-white font-medium leading-tight line-clamp-2">
-                {signal.market_question}
-              </p>
-              <span
-                className={cn(
-                  'shrink-0 px-2 py-0.5 text-xs font-medium rounded border',
-                  strengthColors[signal.signal_strength]
-                )}
-              >
-                {signal.signal_strength}
-              </span>
-            </div>
+        {isLoading ? (
+          <p className="p-4 text-sm text-slate-500">Loading…</p>
+        ) : signals.length === 0 ? (
+          <p className="p-4 text-sm text-slate-500">
+            No consensus signals yet. They appear once several high-scoring
+            traders back the same outcome in the same market.
+          </p>
+        ) : (
+          signals.map((signal) => (
+            <div
+              key={signal.market_slug}
+              className="p-4 hover:bg-slate-800/50 transition-colors"
+            >
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <p className="text-sm text-white font-medium leading-tight line-clamp-2">
+                  {signal.title || signal.market_slug}
+                </p>
+                <span
+                  className={cn(
+                    'shrink-0 px-2 py-0.5 text-xs font-medium rounded border',
+                    strengthColors[signal.consensus_strength]
+                  )}
+                >
+                  {signal.consensus_strength}
+                </span>
+              </div>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-1">
-                  <Zap className="h-3.5 w-3.5 text-aware-400" />
-                  <span className="text-sm font-semibold text-aware-400">
-                    {signal.outcome}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1">
+                    <Zap className="h-3.5 w-3.5 text-aware-400" />
+                    <span className="text-sm font-semibold text-aware-400">
+                      {signal.favored_outcome}
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-500">
+                    {signal.trader_count} trader{signal.trader_count === 1 ? '' : 's'}
                   </span>
                 </div>
-                <span className="text-xs text-slate-500">
-                  {signal.traders_count} traders
-                </span>
-              </div>
 
-              {/* Consensus bar */}
-              <div className="flex items-center gap-2">
-                <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-aware-500 to-cyan-400 rounded-full"
-                    style={{ width: `${signal.consensus_level}%` }}
-                  />
-                </div>
-                <span className="text-xs font-medium text-slate-400">
-                  {signal.consensus_level}%
+                <span className="text-xs font-medium text-slate-400 tabular-nums">
+                  ${signal.total_volume.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </span>
               </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {/* Footer */}

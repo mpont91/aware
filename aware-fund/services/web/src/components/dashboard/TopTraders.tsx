@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Trophy, ExternalLink, TrendingUp, TrendingDown, Loader2 } from 'lucide-react'
 import { cn, formatCurrency, formatNumber } from '@/lib/utils'
-import { api, Trader } from '@/lib/api'
+import { api, Trader, traderName, traderInitial } from '@/lib/api'
 
 const tierColors: Record<string, string> = {
   Diamond: 'bg-gradient-to-r from-cyan-400 to-blue-400 text-slate-900',
@@ -119,10 +119,10 @@ export function TopTraders() {
               {/* Avatar & Username */}
               <div className="flex items-center gap-3 flex-1">
                 <div className="w-10 h-10 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white font-semibold">
-                  {(trader.username || trader.proxy_address || '?').charAt(0).toUpperCase()}
+                  {traderInitial(trader)}
                 </div>
                 <div>
-                  <p className="font-medium text-white">{trader.username || `${trader.proxy_address?.slice(0, 6)}...${trader.proxy_address?.slice(-4)}`}</p>
+                  <p className="font-medium text-white">{traderName(trader)}</p>
                   <span
                     className={cn(
                       'inline-flex px-2 py-0.5 text-xs font-medium rounded-full',

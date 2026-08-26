@@ -1474,10 +1474,15 @@ async def get_recent_activity(
     try:
         client = get_clickhouse_client()
 
+        # Joined on proxy_address, not username: username is empty on nearly
+        # every row, so matching on it paired every trade with every score and
+        # the feed showed arbitrary trades as if they were high scorers.
         query = f"""
         SELECT
             t.ts,
             t.username,
+            t.pseudonym,
+            t.proxy_address,
             s.total_score,
             t.market_slug,
             t.title,
@@ -1488,10 +1493,10 @@ async def get_recent_activity(
             t.notional
         FROM polybot.aware_global_trades t
         JOIN (
-            SELECT username, total_score
+            SELECT proxy_address, total_score
             FROM polybot.aware_smart_money_scores FINAL
             WHERE total_score >= {min_score}
-        ) s ON t.username = s.username
+        ) s ON t.proxy_address = s.proxy_address
         ORDER BY t.ts DESC
         LIMIT {limit}
         """
@@ -1503,14 +1508,18 @@ async def get_recent_activity(
             trades.append({
                 'timestamp': row[0].isoformat() if row[0] else None,
                 'username': row[1],
-                'smart_money_score': row[2],
-                'market_slug': row[3],
-                'title': row[4],
-                'side': row[5],
-                'outcome': row[6],
-                'price': round(row[7], 3) if row[7] else None,
-                'size': round(row[8], 2) if row[8] else None,
-                'notional': round(row[9], 2) if row[9] else None
+                # username is almost always empty; the pseudonym is what
+                # Polymarket actually shows for these accounts.
+                'pseudonym': row[2],
+                'proxy_address': row[3],
+                'smart_money_score': row[4],
+                'market_slug': row[5],
+                'title': row[6],
+                'side': row[7],
+                'outcome': row[8],
+                'price': round(row[9], 3) if row[9] else None,
+                'size': round(row[10], 2) if row[10] else None,
+                'notional': round(row[11], 2) if row[11] else None
             })
 
         return {
@@ -2383,6 +2392,7 @@ async def get_pnl_summary():
         if not rows:
             return {
                 "has_data": False,
+                "mode": os.getenv("HFT_MODE", "PAPER").upper(),
                 "total_pnl": 0.0,
                 "realized_pnl": 0.0,
                 "unrealized_pnl": 0.0,
@@ -2411,6 +2421,8 @@ async def get_pnl_summary():
 
         return {
             "has_data": True,
+            # Labels the figure honestly: simulated fills or real money.
+            "mode": os.getenv("HFT_MODE", "PAPER").upper(),
             "total_pnl": total_pnl,
             "realized_pnl": sum(s["realized_pnl"] for s in strategies),
             "unrealized_pnl": sum(s["unrealized_pnl"] for s in strategies),

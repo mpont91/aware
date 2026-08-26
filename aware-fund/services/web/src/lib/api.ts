@@ -148,6 +148,8 @@ export interface EdgeDecayResponse {
 export interface RecentTrade {
   timestamp: string
   username: string
+  pseudonym: string
+  proxy_address: string
   smart_money_score: number
   market_slug: string
   title: string
@@ -260,6 +262,8 @@ export interface TrainingRunResponse {
 
 export interface PnlSummary {
   has_data: boolean
+  /** PAPER or LIVE, so the figure can be labelled honestly. */
+  mode: string
   total_pnl: number
   realized_pnl: number
   unrealized_pnl: number
@@ -294,6 +298,33 @@ export interface DataFreshness {
 // rewrites it to the API internally, so a reverse proxy only needs to forward
 // this app's port. Uses ?? so an explicit "" is honoured, unlike ||.
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+
+/**
+ * Display name for a trader. username is empty on nearly every Polymarket
+ * account, so the pseudonym is what people actually recognise; the address is
+ * the last resort. Never returns an empty string.
+ */
+type TraderIdentity = {
+  username?: string | null
+  pseudonym?: string | null
+  proxy_address?: string | null
+}
+
+export function traderName(t: TraderIdentity): string {
+  if (t.username) return t.username
+  if (t.pseudonym) return t.pseudonym
+  if (t.proxy_address) return `${t.proxy_address.slice(0, 6)}...${t.proxy_address.slice(-4)}`
+  return 'Unknown trader'
+}
+
+/** First character for an avatar. Skips the 0x prefix, which every address
+ *  shares and which otherwise renders the same "0" for everyone. */
+export function traderInitial(t: TraderIdentity): string {
+  if (t.username) return t.username.charAt(0).toUpperCase()
+  if (t.pseudonym) return t.pseudonym.charAt(0).toUpperCase()
+  if (t.proxy_address) return t.proxy_address.slice(2, 3).toUpperCase()
+  return '?'
+}
 
 function toNumber(value: unknown, fallback = 0): number {
   const num = typeof value === 'number' ? value : Number(value)

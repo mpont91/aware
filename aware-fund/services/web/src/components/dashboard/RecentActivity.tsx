@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Activity, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react'
 import { cn, formatCurrency, getTimeAgo } from '@/lib/utils'
-import { api, RecentTrade } from '@/lib/api'
+import { api, RecentTrade, traderName } from '@/lib/api'
 
 interface ActivityItem {
   id: string

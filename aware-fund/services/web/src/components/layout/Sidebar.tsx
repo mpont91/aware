@@ -199,7 +199,7 @@ function PnlFooter() {
   if (isLoading) {
     return (
       <div className="rounded-lg bg-slate-800/40 p-4">
-        <p className="text-xs font-medium text-slate-500">Paper P&L</p>
+        <p className="text-xs font-medium text-slate-500">P&L</p>
         <p className="text-2xl font-bold text-slate-600 mt-1">—</p>
       </div>
     )
@@ -208,7 +208,9 @@ function PnlFooter() {
   if (!pnl?.has_data) {
     return (
       <div className="rounded-lg bg-slate-800/40 p-4">
-        <p className="text-xs font-medium text-slate-500">Paper P&L</p>
+        <p className="text-xs font-medium text-slate-500">
+          {pnl?.mode === 'LIVE' ? 'Live P&L' : 'Paper P&L'}
+        </p>
         <p className="text-sm text-slate-500 mt-1">No trades yet</p>
       </div>
     )
@@ -228,7 +230,9 @@ function PnlFooter() {
         up ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'
       )}
     >
-      <p className="text-xs font-medium text-slate-400 mb-1">Paper P&L</p>
+      <p className="text-xs font-medium text-slate-400 mb-1">
+        {pnl.mode === 'LIVE' ? 'Live P&L' : 'Paper P&L'}
+      </p>
       <p className={cn('text-2xl font-bold', up ? 'text-green-400' : 'text-red-400')}>
         {up ? '+' : ''}{money}
       </p>
