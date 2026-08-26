@@ -31,6 +31,8 @@ class HealthChecker:
     def __init__(self):
         self.ch_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
         self.ch_port = int(os.getenv('CLICKHOUSE_PORT', '8123'))
+        self.ch_user = os.getenv('CLICKHOUSE_USER', 'default')
+        self.ch_password = os.getenv('CLICKHOUSE_PASSWORD', '')
         self._client: Optional[clickhouse_connect.driver.Client] = None
 
     @property
@@ -39,7 +41,9 @@ class HealthChecker:
             self._client = clickhouse_connect.get_client(
                 host=self.ch_host,
                 port=self.ch_port,
-                database='polybot'
+                database='polybot',
+                username=self.ch_user,
+                password=self.ch_password
             )
         return self._client
 

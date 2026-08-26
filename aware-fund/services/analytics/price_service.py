@@ -98,7 +98,9 @@ class PriceService:
         return clickhouse_connect.get_client(
             host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
             port=int(os.getenv('CLICKHOUSE_PORT', '8123')),
-            database=os.getenv('CLICKHOUSE_DATABASE', 'polybot')
+            database=os.getenv('CLICKHOUSE_DATABASE', 'polybot'),
+            username=os.getenv('CLICKHOUSE_USER', 'default'),
+            password=os.getenv('CLICKHOUSE_PASSWORD', '')
         )
 
     def get_price(self, token_id: str) -> Optional[MarketPrice]:

@@ -43,7 +43,9 @@ def get_clickhouse_client():
     return clickhouse_connect.get_client(
         host=os.getenv('CLICKHOUSE_HOST', 'localhost'),
         port=int(os.getenv('CLICKHOUSE_PORT', '8123')),
-        database=os.getenv('CLICKHOUSE_DATABASE', 'polybot')
+        database=os.getenv('CLICKHOUSE_DATABASE', 'polybot'),
+        username=os.getenv('CLICKHOUSE_USER', 'default'),
+        password=os.getenv('CLICKHOUSE_PASSWORD', '')
     )
 
 
@@ -736,7 +738,13 @@ def run_nav_calculation_job(ch_client) -> dict:
         # NAVCalculator uses clickhouse_driver, not clickhouse_connect
         ch_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
         ch_port = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
-        driver_client = Client(host=ch_host, port=ch_port)
+        driver_client = Client(
+            host=ch_host,
+            port=ch_port,
+            # clickhouse_driver calls it user=, not username=
+            user=os.getenv('CLICKHOUSE_USER', 'default'),
+            password=os.getenv('CLICKHOUSE_PASSWORD', ''),
+        )
 
         calculator = NAVCalculator(driver_client)
         valuations = calculator.calculate_all_funds()

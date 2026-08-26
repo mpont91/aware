@@ -59,13 +59,18 @@ class ClickHouseClient:
         host: str = None,
         port: int = None,
         database: str = None,
-        username: str = "default",
-        password: str = ""
+        username: str = None,
+        password: str = None
     ):
         # Read from env vars with defaults
         host = host or os.getenv('CLICKHOUSE_HOST', 'localhost')
         port = port or int(os.getenv('CLICKHOUSE_PORT', '8123'))
         database = database or os.getenv('CLICKHOUSE_DATABASE', 'polybot')
+        # Credentials come from the environment too, otherwise every caller
+        # would have to pass them and a password-protected server rejects all
+        # of them with AUTHENTICATION_FAILED.
+        username = username or os.getenv('CLICKHOUSE_USER', 'default')
+        password = password if password is not None else os.getenv('CLICKHOUSE_PASSWORD', '')
 
         self.client = clickhouse_connect.get_client(
             host=host,

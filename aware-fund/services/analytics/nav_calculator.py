@@ -504,7 +504,13 @@ def run_nav_calculation():
 
     logger.info("Starting NAV calculation...")
 
-    client = Client(host=ch_host, port=ch_port)
+    client = Client(
+        host=ch_host,
+        port=ch_port,
+        # clickhouse_driver calls it user=, not username=
+        user=os.getenv('CLICKHOUSE_USER', 'default'),
+        password=os.getenv('CLICKHOUSE_PASSWORD', ''),
+    )
     calculator = NAVCalculator(client)
 
     valuations = calculator.calculate_all_funds()

@@ -178,7 +178,13 @@ def run_insider_detection():
     # Create ClickHouse client
     ch_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
     ch_port = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
-    client = Client(host=ch_host, port=ch_port)
+    client = Client(
+        host=ch_host,
+        port=ch_port,
+        # clickhouse_driver calls it user=, not username=
+        user=os.getenv('CLICKHOUSE_USER', 'default'),
+        password=os.getenv('CLICKHOUSE_PASSWORD', ''),
+    )
 
     # Run detection
     detector = InsiderDetector(client)
