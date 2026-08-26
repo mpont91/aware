@@ -101,7 +101,11 @@ hft:
 
   executor:
     base-url: ${EXECUTOR_BASE_URL:http://executor:8080}
-    send-live-ack: ${HFT_MODE:PAPER} == "LIVE"
+    # Spring does not evaluate expressions in property values: the previous
+    # `${HFT_MODE:PAPER} == "LIVE"` reached the binder as the literal string
+    # 'PAPER == "LIVE"' and failed to convert to Boolean, so the service could
+    # not start at all. Driven by its own flag instead.
+    send-live-ack: ${HFT_SEND_LIVE_ACK:false}
 
   risk:
     kill-switch: false
