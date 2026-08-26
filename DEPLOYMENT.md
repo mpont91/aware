@@ -101,8 +101,8 @@ cd /opt/aware
 ./deploy/deploy.sh setup
 
 # Configure environment
-cp deploy/.env.example deploy/.env
-nano deploy/.env  # Fill in your values
+cp .env.example .env
+nano .env  # Fill in your values
 
 # Setup SSL (optional for dev)
 ./deploy/deploy.sh ssl
@@ -173,7 +173,7 @@ aware/
 │   ├── docker-compose.prod.yaml # Server production
 │   ├── Dockerfile.java          # Java services
 │   ├── Dockerfile.web           # Next.js dashboard
-│   ├── nginx/                   # Nginx config
+│   ├── caddy/                   # Caddy config (automatic TLS)
 │   ├── monitoring/              # Prometheus config
 │   ├── deploy.sh                # Server deployment script
 │   └── .env.example             # Environment template

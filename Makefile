@@ -19,7 +19,7 @@
 # Production stack: the compose files live in deploy/ but are always run from
 # the repo root, so .env sits where you'd expect it. Compose resolves the paths
 # inside them relative to their own directory, so this is safe.
-PROD_COMPOSE := --env-file .env -f deploy/docker-compose.prod.yaml -f deploy/docker-compose.caddy.yaml
+PROD_COMPOSE := --env-file .env -f deploy/docker-compose.prod.yaml
 
 # Colors
 GREEN  := $(shell tput -Txterm setaf 2)

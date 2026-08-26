@@ -1,34 +1,65 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # AWARE — Caddy config
 # ═══════════════════════════════════════════════════════════════════════════
-# Mounted into the caddy container by docker-compose.caddy.yaml. Values come
+# Mounted into the caddy container by docker-compose.prod.yaml. Values come
 # from .env in the repo root, so this file needs no editing to deploy.
 #
-# Caddy obtains and renews the certificate itself on first request. Nothing to
-# run beforehand and nothing to schedule afterwards.
-#
-# Only the dashboard is proxied: it rewrites /api/* to the API over the compose
-# network by itself (next.config.js), so the API needs no route of its own and
-# stays unreachable from outside.
+# Caddy obtains and renews the TLS certificate itself on first request, and
+# redirects HTTP to HTTPS automatically. There is nothing to run beforehand
+# and nothing to schedule afterwards.
 # ═══════════════════════════════════════════════════════════════════════════
 
 {$AWARE_DOMAIN} {
 	encode gzip
 
-	# Covers the dashboard and, through it, the API. Same origin, so the
-	# browser sends the credentials to both and there is no CORS to configure.
+	# ── Authentication ──────────────────────────────────────────────────────
+	# Covers every route below, the API included. The dashboard and the API
+	# share one origin, so the browser sends the credentials to both and there
+	# is no CORS to configure.
+	#
+	# Generate the hash with:
+	#   docker run --rm caddy:2-alpine caddy hash-password
 	basic_auth {
 		{$AWARE_USER} {$AWARE_PASSWORD_HASH}
 	}
 
-	# Service name on the compose network, not localhost: Caddy runs in its
-	# own container.
-	reverse_proxy web:3000
+	# ── Rate limiting ───────────────────────────────────────────────────────
+	# Per client IP, matching the limits the previous nginx config enforced.
+	# Needs the caddy-ratelimit plugin, compiled in by deploy/Dockerfile.caddy.
+	rate_limit {
+		zone api {
+			match {
+				path /api/*
+			}
+			key {remote_host}
+			events 10
+			window 1s
+		}
+		zone general {
+			key {remote_host}
+			events 30
+			window 1s
+		}
+	}
+
+	# ── Health check ────────────────────────────────────────────────────────
+	# Before the proxy so it answers even if the dashboard is down.
+	handle /health {
+		respond "OK" 200
+	}
+
+	# ── Dashboard ───────────────────────────────────────────────────────────
+	# The only service proxied: it rewrites /api/* to the API over the compose
+	# network itself (next.config.js), so the API needs no route of its own.
+	# Service name, not localhost: Caddy runs in its own container.
+	handle {
+		reverse_proxy web:3000
+	}
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
-		X-Frame-Options "DENY"
+		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}
@@ -42,6 +73,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # Deliberately not routed
 # ═══════════════════════════════════════════════════════════════════════════
-# Grafana and Prometheus. They stay on 127.0.0.1 and are reachable over an SSH
-# tunnel:  ssh -L 3001:127.0.0.1:3001 user@server
+# Grafana, Prometheus and the Java strategy service. The old nginx exposed
+# /grafana/ and /api/strategy/; both are now reachable over an SSH tunnel
+# instead, e.g.  ssh -L 3001:127.0.0.1:3001 user@server
 # Every route published here is another way in.

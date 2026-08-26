@@ -11,6 +11,10 @@ baked into a config file.
 Assumes the server is dedicated to AWARE — the Caddy container claims ports 80
 and 443. To run alongside an existing proxy, see [Sharing a server](#sharing-a-server).
 
+Caddy is built from `deploy/Dockerfile.caddy` with the `caddy-ratelimit`
+plugin compiled in, which is the one thing the stock image lacks and the
+previous nginx setup provided.
+
 ## Requirements
 
 The stack idles around **4 GB of RAM** and grows with ingested data. 8 GB is a
@@ -28,8 +32,12 @@ to `127.0.0.1`, and Caddy reaches them over the compose network.
 |---|---|
 | dashboard (`/`) | yes, behind basic auth |
 | AWARE API (`/api/*`, through the dashboard) | yes, behind basic auth |
+| `/health` | yes, unauthenticated, returns `OK` |
 | Grafana, Prometheus | no — SSH tunnel |
 | Java services, ClickHouse, Redpanda | no |
+
+Rate limits are per client IP: 10 requests/second on `/api/*`, 30 elsewhere.
+Exceeding them returns 429.
 
 ## 1. Point the domain at the server
 
@@ -145,13 +153,10 @@ Then open `http://localhost:3001`.
 If something else already owns 80/443, drop the Caddy overlay and let the
 existing proxy forward to `WEB_PORT`:
 
-```bash
-docker compose --env-file .env -f deploy/docker-compose.prod.yaml up -d --build
-```
-
-A single route to `localhost:3000` is enough there — the dashboard reaches the
-API itself. Note the bundled nginx service starts in that case and will fight
-for 80/443, so remove it or give it a profile.
+Give the `caddy` service a profile so it does not start, and point the existing
+proxy at `WEB_PORT`. A single route to `localhost:3000` is enough — the
+dashboard reaches the API itself. You lose the rate limiting, which lives in
+the Caddy config, so configure it in that proxy instead.
 
 ## Notes
 

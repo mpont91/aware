@@ -203,11 +203,20 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
+      args:
+        # Empty on purpose: the browser calls /api/... on the current origin
+        # and next.config.js rewrites it to the API, so Caddy proxies a single
+        # service and the domain never gets compiled into the client bundle.
+        NEXT_PUBLIC_API_URL: ""
+        # next.config.js resolves its rewrites at build time as well, so the
+        # target has to be known here rather than at runtime.
+        API_INTERNAL_URL: http://api:8000
     container_name: aware-web
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api:8000}
+      NEXT_PUBLIC_API_URL: ""
+      API_INTERNAL_URL: http://api:8000
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:3000"
     healthcheck:
@@ -218,29 +227,31 @@ services:
     restart: unless-stopped
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # REVERSE PROXY (Nginx)
+  # REVERSE PROXY (Caddy — automatic TLS)
   # ═══════════════════════════════════════════════════════════════════════════
 
-  nginx:
-    image: nginx:alpine
-    container_name: aware-nginx
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: aware-caddy
     depends_on:
       - web
-      - api
-      - strategy
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      AWARE_DOMAIN: ${AWARE_DOMAIN:?set AWARE_DOMAIN in .env}
+      AWARE_USER: ${AWARE_USER:-admin}
+      # Single-quote the hash in .env or compose eats its $ segments.
+      AWARE_PASSWORD_HASH: ${AWARE_PASSWORD_HASH:?set AWARE_PASSWORD_HASH in .env}
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - /var/www/certbot:/var/www/certbot:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Without this volume Caddy re-requests them on
+      # every recreate and hits Let's Encrypt rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
     restart: unless-stopped
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # MONITORING
-  # ═══════════════════════════════════════════════════════════════════════════
 
   prometheus:
     image: prom/prometheus:v2.48.0
@@ -277,6 +288,9 @@ volumes:
   clickhouse_data:
   prometheus_data:
   grafana_data:
+  # TLS certificates. Losing this means re-requesting them from Let's Encrypt.
+  caddy_data:
+  caddy_config:
 
 networks:
   default:

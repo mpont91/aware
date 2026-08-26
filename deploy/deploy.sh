@@ -5,7 +5,6 @@
 # Usage:
 #   ./deploy.sh setup     - First-time server setup
 #   ./deploy.sh deploy    - Deploy/update the application
-#   ./deploy.sh ssl       - Setup SSL certificates
 #   ./deploy.sh logs      - View service logs
 #   ./deploy.sh status    - Check service status
 #   ./deploy.sh stop      - Stop all services
@@ -99,91 +98,24 @@ setup() {
     fi
 
     # Create .env file if not exists
-    if [ ! -f "$DEPLOY_DIR/deploy/.env" ]; then
+    if [ ! -f "$DEPLOY_DIR/.env" ]; then
         log "Creating .env file from template..."
-        cp "$DEPLOY_DIR/deploy/.env.example" "$DEPLOY_DIR/deploy/.env"
-        warn "Please edit $DEPLOY_DIR/deploy/.env with your configuration!"
+        cp "$DEPLOY_DIR/.env.example" "$DEPLOY_DIR/.env"
+        warn "Please edit $DEPLOY_DIR/.env with your configuration!"
     fi
 
     log "✅ Server setup complete!"
     log ""
     log "Next steps:"
-    log "  1. Edit $DEPLOY_DIR/deploy/.env with your configuration"
-    log "  2. Run: ./deploy.sh ssl"
-    log "  3. Run: ./deploy.sh deploy"
+    log "  1. Edit $DEPLOY_DIR/.env with your configuration"
+    log "  2. Point your domain's A record at this server"
+    log "  3. Run: make prod-up   (Caddy handles TLS on its own)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────────
-# Setup SSL certificates with Let's Encrypt
-# ─────────────────────────────────────────────────────────────────────────────────
-ssl() {
-    log "Setting up SSL certificates..."
-
-    # Check if .env exists
-    if [ ! -f "$DEPLOY_DIR/deploy/.env" ]; then
-        error ".env file not found. Run setup first."
-    fi
-
-    source "$DEPLOY_DIR/deploy/.env"
-
-    if [ -z "$DOMAIN" ] || [ -z "$ADMIN_EMAIL" ]; then
-        error "DOMAIN and ADMIN_EMAIL must be set in .env"
-    fi
-
-    # Create directories
-    mkdir -p "$DEPLOY_DIR/deploy/nginx/ssl"
-    mkdir -p /etc/letsencrypt
-    mkdir -p /var/www/certbot
-
-    # Start nginx with HTTP only (for certbot challenge)
-    log "Starting nginx for certificate challenge..."
-
-    # Create temporary nginx config for certbot
-    cat > /tmp/nginx-certbot.conf << 'EOF'
-events { worker_connections 1024; }
-http {
-    server {
-        listen 80;
-        server_name _;
-        location /.well-known/acme-challenge/ {
-            root /var/www/certbot;
-        }
-        location / {
-            return 200 "Certbot challenge server";
-        }
-    }
-}
-EOF
-
-    docker run -d --name certbot-nginx \
-        -p 80:80 \
-        -v /tmp/nginx-certbot.conf:/etc/nginx/nginx.conf:ro \
-        -v /var/www/certbot:/var/www/certbot \
-        nginx:alpine
-
-    # Get certificate
-    log "Requesting certificate for $DOMAIN..."
-    docker run --rm \
-        -v /etc/letsencrypt:/etc/letsencrypt \
-        -v /var/www/certbot:/var/www/certbot \
-        certbot/certbot certonly \
-        --webroot \
-        --webroot-path=/var/www/certbot \
-        -d "$DOMAIN" \
-        --email "$ADMIN_EMAIL" \
-        --agree-tos \
-        --no-eff-email
-
-    # Stop temporary nginx
-    docker stop certbot-nginx && docker rm certbot-nginx
-
-    log "✅ SSL certificate obtained!"
-    log "Certificate location: /etc/letsencrypt/live/$DOMAIN/"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# Deploy application
-# ─────────────────────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Deploy
+# ═══════════════════════════════════════════════════════════════════════════
 deploy() {
     log "Deploying AWARE Fund..."
 
@@ -194,8 +126,8 @@ deploy() {
     git pull origin main
 
     # Load environment
-    if [ -f "$DEPLOY_DIR/deploy/.env" ]; then
-        export $(grep -v '^#' "$DEPLOY_DIR/deploy/.env" | xargs)
+    if [ -f "$DEPLOY_DIR/.env" ]; then
+        export $(grep -v '^#' "$DEPLOY_DIR/.env" | xargs)
     fi
 
     cd "$DEPLOY_DIR/deploy"
@@ -280,9 +212,6 @@ case "${1:-help}" in
     setup)
         setup
         ;;
-    ssl)
-        ssl
-        ;;
     deploy)
         deploy
         ;;
@@ -302,7 +231,6 @@ case "${1:-help}" in
         echo ""
         echo "Commands:"
         echo "  setup   - First-time server setup"
-        echo "  ssl     - Setup SSL certificates"
         echo "  deploy  - Deploy/update the application"
         echo "  logs    - View service logs (optionally: logs <service>)"
         echo "  status  - Check service status"

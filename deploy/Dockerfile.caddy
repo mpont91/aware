@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Caddy with rate limiting
+# ═══════════════════════════════════════════════════════════════════════════
+# The stock image has no rate limiting, so it is compiled in. This keeps the
+# per-IP limits the previous nginx setup enforced, which is the one thing Caddy
+# does not cover out of the box.
+# ═══════════════════════════════════════════════════════════════════════════
+
+FROM caddy:2-builder-alpine AS builder
+
+RUN xcaddy build --with github.com/mholt/caddy-ratelimit
+
+FROM caddy:2-alpine
+
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
