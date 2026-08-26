@@ -29,7 +29,7 @@ import {
   Pie,
   Cell,
 } from 'recharts'
-import { api, TraderProfile } from '@/lib/api'
+import { api, TraderProfile, traderName, traderInitial } from '@/lib/api'
 
 // Performance data (placeholder - will be populated from API when available)
 const mockPerformance = [
@@ -156,12 +156,12 @@ export default function TraderProfilePage() {
           <div className="flex items-start gap-4">
             <div className="relative">
               <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-3xl font-bold text-white">
-                {(trader.username || trader.proxy_address || '?').charAt(0).toUpperCase()}
+                {traderInitial(trader)}
               </div>
             </div>
             <div>
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold text-white">{trader.username || `${trader.proxy_address?.slice(0, 6)}...${trader.proxy_address?.slice(-4)}`}</h1>
+                <h1 className="text-2xl font-bold text-white">{traderName(trader)}</h1>
                 <span className={cn('px-3 py-1 text-sm font-semibold rounded-full', tierStyles[trader.tier] || tierStyles['BRONZE'])}>
                   {formatTier(trader.tier)}
                 </span>

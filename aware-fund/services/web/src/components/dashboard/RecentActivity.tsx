@@ -32,7 +32,7 @@ export function RecentActivity() {
         const items: ActivityItem[] = response.trades.map((trade, index) => ({
           id: `${trade.timestamp}-${index}`,
           type: 'trade' as const,
-          trader: trade.username || 'Anonymous',
+          trader: traderName(trade),
           tier: trade.smart_money_score >= 80 ? 'Diamond' :
                 trade.smart_money_score >= 60 ? 'Gold' :
                 trade.smart_money_score >= 40 ? 'Silver' : 'Bronze',

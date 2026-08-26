@@ -15,7 +15,7 @@ import {
   Calculator,
 } from 'lucide-react'
 import { cn, formatCurrency, formatNumber } from '@/lib/utils'
-import { api, Trader } from '@/lib/api'
+import { api, Trader, traderName, traderInitial } from '@/lib/api'
 import { MLScoreInline } from '@/components/traders/MLScoreBadge'
 
 const tiers = ['All', 'Diamond', 'Gold', 'Silver', 'Bronze']
@@ -235,10 +235,10 @@ export default function LeaderboardPage() {
                   {/* Trader - reduced from col-span-3 to col-span-2 */}
                   <div className="col-span-2 flex items-center gap-2">
                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white font-bold text-sm">
-                      {(trader.username || trader.proxy_address || '?').charAt(0).toUpperCase()}
+                      {traderInitial(trader)}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-medium text-white text-sm truncate">{trader.username || `${trader.proxy_address?.slice(0, 6)}...`}</p>
+                      <p className="font-medium text-white text-sm truncate">{traderName(trader)}</p>
                       <span
                         className={cn(
                           'inline-flex px-1.5 py-0.5 text-[10px] font-medium rounded-full',
