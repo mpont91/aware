@@ -500,7 +500,7 @@ def run_nav_calculation():
     Called by scheduler or run_all.py every 5 minutes.
     """
     ch_host = os.getenv('CLICKHOUSE_HOST', 'localhost')
-    ch_port = int(os.getenv('CLICKHOUSE_PORT', '9000'))
+    ch_port = int(os.getenv('CLICKHOUSE_NATIVE_PORT', '9000'))
 
     logger.info("Starting NAV calculation...")
 
