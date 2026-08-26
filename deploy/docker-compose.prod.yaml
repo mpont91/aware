@@ -254,9 +254,10 @@ services:
       - "443:443"
     environment:
       AWARE_DOMAIN: ${AWARE_DOMAIN:?set AWARE_DOMAIN in .env}
+      # Only used if basic_auth is re-enabled in the Caddyfile. Optional now
+      # that the dashboard is public, so an empty .env still starts.
       AWARE_USER: ${AWARE_USER:-admin}
-      # Single-quote the hash in .env or compose eats its $ segments.
-      AWARE_PASSWORD_HASH: ${AWARE_PASSWORD_HASH:?set AWARE_PASSWORD_HASH in .env}
+      AWARE_PASSWORD_HASH: ${AWARE_PASSWORD_HASH:-}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       # Certificates live here. Without this volume Caddy re-requests them on

@@ -12,16 +12,18 @@
 {$AWARE_DOMAIN} {
 	encode gzip
 
-	# ── Authentication ──────────────────────────────────────────────────────
-	# Covers every route below, the API included. The dashboard and the API
-	# share one origin, so the browser sends the credentials to both and there
-	# is no CORS to configure.
+	# ── No authentication ───────────────────────────────────────────────────
+	# Public on purpose: the dashboard is read-only. The API exposes no write
+	# endpoints, /api/fund/activate and /api/fund/pause are unregistered, and
+	# 5xx bodies are generic so errors cannot be used to map the stack.
 	#
-	# Generate the hash with:
+	# To lock it down again, generate a hash with
 	#   docker run --rm caddy:2-alpine caddy hash-password
-	basic_auth {
-		{$AWARE_USER} {$AWARE_PASSWORD_HASH}
-	}
+	# and put it back:
+	#
+	#   basic_auth {
+	#     {$AWARE_USER} {$AWARE_PASSWORD_HASH}
+	#   }
 
 	# ── Rate limiting ───────────────────────────────────────────────────────
 	# Per client IP, matching the limits the previous nginx config enforced.

@@ -30,6 +30,8 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
@@ -73,6 +75,34 @@ app = FastAPI(
 
 # Attach rate limiter to app
 app.state.limiter = limiter
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Error responses
+# ─────────────────────────────────────────────────────────────────────────────
+# Endpoints throughout this file raise HTTPException(500, detail=str(e)), which
+# hands the caller the raw exception: ClickHouse errors naming tables and
+# columns, connection errors naming internal hosts and ports. Fine on a private
+# deployment, an infrastructure map on a public one. The detail is logged in
+# full and replaced with a generic message on the way out.
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code >= 500:
+        logger.error(
+            "Unhandled error on %s %s: %s", request.method, request.url.path, exc.detail
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": "Internal server error"},
+        )
+    # 4xx detail is written for the caller and safe to pass through.
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Add CORS middleware
@@ -332,6 +362,10 @@ async def health_check():
             last_score_update=last_update
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return HealthResponse(
@@ -413,6 +447,10 @@ async def get_data_freshness():
             recommendation=recommendation
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Freshness check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -508,6 +546,10 @@ async def get_monitoring():
             last_scoring_at=last_scoring
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Monitoring check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -544,6 +586,10 @@ async def get_daily_stats(days: int = Query(default=7, ge=1, le=30)):
 
         return stats
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Daily stats failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -574,6 +620,10 @@ async def get_stats():
             traders_24h=row[4]
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -670,6 +720,10 @@ async def get_leaderboard(
 
         return entries
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get leaderboard: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -813,6 +867,10 @@ async def get_psi_10():
             calculated_at=calculated_at
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get PSI-10: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -951,6 +1009,10 @@ async def get_hidden_gems(limit: int = Query(default=10, ge=1, le=50)):
             'discoveries': discoveries
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to find hidden gems: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1024,6 +1086,10 @@ async def get_rising_stars(
             'discoveries': discoveries
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to find rising stars: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1092,6 +1158,10 @@ async def get_niche_specialists(limit: int = Query(default=10, ge=1, le=50)):
             'discoveries': discoveries
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to find niche specialists: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1161,6 +1231,10 @@ async def get_consensus_markets(
             'signals': signals
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get consensus: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1245,6 +1319,10 @@ async def get_market_consensus(market_slug: str, hours: int = Query(default=48, 
             'traders': traders
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get market consensus: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1351,6 +1429,10 @@ async def get_trader_health(username: str):
             'recommendation': _get_decay_recommendation(status) if status != 'HEALTHY' else 'Continue monitoring'
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to check trader health: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1452,6 +1534,10 @@ async def get_edge_alerts(
             'alerts': alerts[:limit]
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get edge alerts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1528,6 +1614,10 @@ async def get_recent_activity(
             'trades': trades
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get recent activity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1647,6 +1737,10 @@ async def get_fund_nav(fund_id: str = Query(default="PSI-10")):
             last_updated=row[8]
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund NAV: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1694,6 +1788,10 @@ async def get_fund_positions(fund_id: str = Query(default="psi-10-main")):
 
         return positions
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1745,6 +1843,10 @@ async def get_fund_trades(
 
         return trades
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund trades: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1794,6 +1896,10 @@ async def get_fund_performance(fund_id: str = Query(default="psi-10-main")):
 
         return performance
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund performance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1853,6 +1959,10 @@ async def get_fund_index(index_type: str = Query(default="PSI-10")):
             'constituents': constituents
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund index: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2015,6 +2125,10 @@ async def get_fund_executions(
 
         return executions
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund executions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2123,6 +2237,10 @@ async def get_insider_alerts(
                 alerts=[]
             )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get insider alerts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2167,6 +2285,10 @@ async def scan_for_insider_activity(hours: int = Query(default=24, ge=1, le=72))
             'status': 'error',
             'message': 'InsiderDetector module not available'
         }
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to scan for insider activity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2243,6 +2365,10 @@ async def get_ml_clusters():
 
         return clusters
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get ML clusters: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2305,6 +2431,10 @@ async def get_ml_anomalies(
 
         return anomalies
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get ML anomalies: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2432,6 +2562,10 @@ async def get_pnl_summary():
             "strategies": strategies,
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get P&L summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2478,6 +2612,10 @@ async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
             'points': series,
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get P&L history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2591,6 +2729,10 @@ async def get_ml_health():
             'drifted_features': [] if drift_status == 'normal' else ['data_freshness']
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get ML health: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2661,6 +2803,10 @@ async def get_fund_operational_status(fund_type: str = Query(default="PSI-10")):
     except http_requests.exceptions.RequestException:
         # Strategy service not available, return DB status
         return await _get_fund_status_from_db(fund_type)
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2706,6 +2852,10 @@ async def _get_fund_status_from_db(fund_type: str) -> dict:
             }
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund status from DB: {e}")
         return {
@@ -2715,7 +2865,10 @@ async def _get_fund_status_from_db(fund_type: str) -> dict:
         }
 
 
-@app.post("/api/fund/activate")
+# Not exposed: this dashboard is read-only and reachable without
+# credentials. Controlling funds over an unauthenticated public
+# endpoint has no upside here. Re-enable behind auth if ever needed.
+# @app.post("/api/fund/activate")
 async def activate_fund(request: FundActivateRequest):
     """
     Activate a fund in the Java strategy service.
@@ -2752,12 +2905,19 @@ async def activate_fund(request: FundActivateRequest):
             fund_type=request.fund_type,
             message=f"Strategy service unavailable: {str(e)}"
         )
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to activate fund: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/fund/pause")
+# Not exposed: this dashboard is read-only and reachable without
+# credentials. Controlling funds over an unauthenticated public
+# endpoint has no upside here. Re-enable behind auth if ever needed.
+# @app.post("/api/fund/pause")
 async def pause_fund(fund_type: str = Query(...)):
     """
     Pause trading for a fund.
@@ -2790,6 +2950,10 @@ async def pause_fund(fund_type: str = Query(...)):
             'fund_type': fund_type,
             'message': f"Strategy service unavailable: {str(e)}"
         }
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to pause fund: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2854,6 +3018,10 @@ async def get_fund_metrics(fund_type: str = Query(default="PSI-10")):
             'metrics': metrics
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get fund metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2900,6 +3068,10 @@ async def get_fund_nav_history(
             'data_points': data_points
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get NAV history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3092,6 +3264,10 @@ async def get_model_info(request: Request):
             ]
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get model info: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3152,6 +3328,10 @@ async def get_drift_status(request: Request):
             retrain_recommended=report.get('drift_ratio', 0) >= 0.3
         )
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get drift status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3207,6 +3387,10 @@ async def get_training_history(
             ]
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get training history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3254,6 +3438,10 @@ async def get_feature_importance(
             ]
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get feature importance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3310,6 +3498,10 @@ async def get_tier_distribution(request: Request):
             'tiers': tiers
         }
 
+    except HTTPException:
+        # A deliberate 4xx must keep its status; the generic handler below
+        # would otherwise turn every validation error into a 500.
+        raise
     except Exception as e:
         logger.error(f"Failed to get tier distribution: {e}")
         raise HTTPException(status_code=500, detail=str(e))
