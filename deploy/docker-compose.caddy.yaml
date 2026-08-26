@@ -1,0 +1,36 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Overlay for serving AWARE behind an existing Caddy on the host
+# ═══════════════════════════════════════════════════════════════════════════
+# Use together with the production compose file:
+#
+#   docker compose -f docker-compose.prod.yaml -f docker-compose.caddy.yaml up -d
+#
+# It does two things:
+#   - keeps the bundled nginx from starting, since Caddy already owns 80/443
+#   - passes the public URL into the web image at build time, which is the only
+#     point where Next.js can inline it into the client bundle
+#
+# Everything else stays as in docker-compose.prod.yaml, including binding every
+# service to 127.0.0.1 so only Caddy can reach them.
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  # Parked behind a profile that is never enabled, so it stays defined but
+  # never starts. Caddy on the host terminates TLS instead.
+  nginx:
+    profiles:
+      - unused-nginx
+
+  web:
+    build:
+      args:
+        # Same origin as the dashboard: the browser then sends the basic auth
+        # credentials to the API too, and there is no CORS to deal with.
+        NEXT_PUBLIC_API_URL: "https://${AWARE_DOMAIN:?set AWARE_DOMAIN}"
+    environment:
+      # Already inlined at build time; repeated here only so the two values
+      # don't contradict each other when someone reads the config.
+      NEXT_PUBLIC_API_URL: "https://${AWARE_DOMAIN:?set AWARE_DOMAIN}"
+      # Server-side rewrites in next.config.js talk to the API over the
+      # compose network, not through Caddy.
+      API_INTERNAL_URL: http://api:8000

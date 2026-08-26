@@ -1,0 +1,62 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# AWARE — Caddy site config
+# ═══════════════════════════════════════════════════════════════════════════
+# Serves the dashboard and the API behind HTTP basic auth, with automatic TLS.
+#
+# Everything else (ClickHouse, Redpanda, the Java services, Prometheus) binds
+# to 127.0.0.1 in docker-compose.prod.yaml and is not reachable from outside.
+# Keep it that way: the only thing that should be published is this site.
+#
+# Setup:
+#   1. caddy hash-password            # paste the bcrypt hash below
+#   2. set AWARE_DOMAIN and AWARE_USER in Caddy's environment
+#   3. caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+#
+# Dashboard and API share one origin on purpose: the browser sends the basic
+# auth credentials to both, and there is no CORS to configure.
+# ═══════════════════════════════════════════════════════════════════════════
+
+{$AWARE_DOMAIN} {
+	encode gzip
+
+	# ── Authentication ──────────────────────────────────────────────────────
+	# Applies to every route below, API included. Generate the hash with
+	# `caddy hash-password`; never put a plaintext password here.
+	basic_auth {
+		{$AWARE_USER} {$AWARE_PASSWORD_HASH}
+	}
+
+	# ── AWARE Fund API ──────────────────────────────────────────────────────
+	# `handle` keeps the /api prefix, which is what the API actually serves.
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# ── Dashboard ───────────────────────────────────────────────────────────
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# ── Logging ─────────────────────────────────────────────────────────────
+	log {
+		output file /var/log/caddy/aware.log
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Deliberately NOT exposed
+# ═══════════════════════════════════════════════════════════════════════════
+# /api/strategy/*  the Java strategy service. The dashboard never calls it.
+# /grafana/*       reachable over an SSH tunnel instead:
+#                    ssh -L 3001:127.0.0.1:3001 user@server
+# Both are one `handle` block away if you ever need them, but every route
+# published here is another way in.
