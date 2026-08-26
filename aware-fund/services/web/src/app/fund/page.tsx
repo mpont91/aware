@@ -711,12 +711,6 @@ function FundPageContent() {
           {/* Quick Actions */}
           <div className="flex justify-center gap-4">
             <Link
-              href={`/invest/deposit?fund=${selectedFund}`}
-              className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition-colors"
-            >
-              Deposit into {currentFund.name}
-            </Link>
-            <Link
               href="/funds"
               className="px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-lg transition-colors"
             >

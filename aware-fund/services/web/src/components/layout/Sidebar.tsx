@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
+import { usePnlSummary } from '@/lib/hooks'
 import {
   LayoutDashboard,
   Trophy,
@@ -25,7 +26,6 @@ const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Fund', href: '/fund', icon: PieChart },
   { name: 'All Funds', href: '/funds', icon: Layers },
-  { name: 'Invest', href: '/invest', icon: Wallet },
   { name: 'Leaderboard', href: '/leaderboard', icon: Trophy },
   { name: 'Consensus', href: '/consensus', icon: Users },
   { name: 'Discovery', href: '/discovery', icon: Sparkles },
@@ -180,15 +180,62 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
           {/* Footer */}
           <div className="p-4 border-t border-slate-800">
-            <div className="rounded-lg bg-gradient-to-r from-aware-600/20 to-cyan-600/20 p-4">
-              <p className="text-xs font-medium text-aware-400 mb-1">PSI-10 Index</p>
-              <p className="text-2xl font-bold text-white">$142.50</p>
-              <p className="text-xs text-green-400 mt-1">+2.4% today</p>
-            </div>
+            <PnlFooter />
           </div>
         </div>
       </aside>
     </>
+  )
+}
+
+/**
+ * Paper-trading P&L, replacing what used to be a hardcoded index price.
+ * Shows nothing but a placeholder until the analytics job writes its first
+ * snapshot, which needs simulated fills to exist first.
+ */
+function PnlFooter() {
+  const { pnl, isLoading } = usePnlSummary()
+
+  if (isLoading) {
+    return (
+      <div className="rounded-lg bg-slate-800/40 p-4">
+        <p className="text-xs font-medium text-slate-500">Paper P&L</p>
+        <p className="text-2xl font-bold text-slate-600 mt-1">—</p>
+      </div>
+    )
+  }
+
+  if (!pnl?.has_data) {
+    return (
+      <div className="rounded-lg bg-slate-800/40 p-4">
+        <p className="text-xs font-medium text-slate-500">Paper P&L</p>
+        <p className="text-sm text-slate-500 mt-1">No trades yet</p>
+      </div>
+    )
+  }
+
+  const up = pnl.total_pnl >= 0
+  const money = pnl.total_pnl.toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  })
+
+  return (
+    <div
+      className={cn(
+        'rounded-lg p-4 border',
+        up ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'
+      )}
+    >
+      <p className="text-xs font-medium text-slate-400 mb-1">Paper P&L</p>
+      <p className={cn('text-2xl font-bold', up ? 'text-green-400' : 'text-red-400')}>
+        {up ? '+' : ''}{money}
+      </p>
+      <p className="text-xs text-slate-500 mt-1">
+        {up ? '+' : ''}{pnl.roi_pct.toFixed(1)}% · {pnl.positions} position{pnl.positions === 1 ? '' : 's'}
+      </p>
+    </div>
   )
 }
 

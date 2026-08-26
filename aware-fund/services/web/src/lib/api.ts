@@ -194,55 +194,6 @@ export interface UserHolding {
   nav_per_share: number
 }
 
-export interface InvestorPortfolio {
-  wallet_address: string
-  total_value_usd: number
-  total_cost_basis: number
-  total_unrealized_pnl: number
-  total_unrealized_pnl_pct: number
-  holdings: UserHolding[]
-}
-
-export interface Transaction {
-  id: string
-  fund_id: string
-  transaction_type: 'DEPOSIT' | 'WITHDRAWAL'
-  amount_usd: number
-  shares: number
-  nav_per_share: number
-  status: 'PENDING' | 'COMPLETED' | 'FAILED'
-  created_at: string
-}
-
-export interface TransactionsResponse {
-  transactions: Transaction[]
-  count: number
-}
-
-export interface DepositRequest {
-  wallet_address: string
-  fund_id: string
-  amount_usd: number
-  tx_hash?: string
-}
-
-export interface WithdrawRequest {
-  wallet_address: string
-  fund_id: string
-  shares?: number
-  amount_usd?: number
-  withdraw_all?: boolean
-}
-
-export interface TransactionResponse {
-  id: string
-  fund_id: string
-  amount_usd: number
-  shares: number
-  nav_per_share: number
-  status: string
-}
-
 export interface NAVDataPoint {
   timestamp: string
   nav_per_share: number
@@ -305,6 +256,24 @@ export interface TrainingRun {
 export interface TrainingRunResponse {
   count: number
   runs: TrainingRun[]
+}
+
+export interface PnlSummary {
+  has_data: boolean
+  total_pnl: number
+  realized_pnl: number
+  unrealized_pnl: number
+  roi_pct: number
+  positions: number
+  calculated_at: string | null
+  strategies: Array<{
+    strategy: string
+    realized_pnl: number
+    unrealized_pnl: number
+    total_pnl: number
+    positions: number
+    positions_resolved: number
+  }>
 }
 
 export interface DataFreshness {
@@ -431,6 +400,10 @@ function qp(params: Record<string, string | number | undefined>): string {
 export const api = {
   async getDataFreshness(): Promise<DataFreshness> {
     return fetchJson<DataFreshness>('/api/freshness')
+  },
+
+  async getPnlSummary(): Promise<PnlSummary> {
+    return fetchJson<PnlSummary>('/api/pnl/summary')
   },
 
   async getDashboardStats(): Promise<DashboardStats> {
@@ -604,96 +577,6 @@ export const api = {
 
     return {
       funds: Array.from(byId.values()).sort((a, b) => b.total_aum - a.total_aum),
-    }
-  },
-
-  async getPortfolio(walletAddress: string): Promise<InvestorPortfolio> {
-    const raw = await fetchJson<Record<string, unknown>>(`/api/invest/portfolio${qp({ wallet_address: walletAddress })}`)
-
-    const holdingsRaw = Array.isArray(raw.holdings) ? (raw.holdings as Array<Record<string, unknown>>) : []
-    const holdings = holdingsRaw.map((h) => {
-      const fundId = normalizeFundId(h.fund_id ?? h.fund_type)
-      return {
-        fund_id: fundId,
-        fund_type: fundCategoryFromId(fundId),
-        shares: toNumber(h.shares ?? h.shares_balance, 0),
-        value_usd: toNumber(h.value_usd ?? h.current_value_usdc, 0),
-        cost_basis: toNumber(h.cost_basis ?? h.cost_basis_usdc, 0),
-        unrealized_pnl: toNumber(h.unrealized_pnl ?? h.pnl_usdc, 0),
-        unrealized_pnl_pct: toNumber(h.unrealized_pnl_pct ?? h.pnl_pct, 0),
-        nav_per_share: toNumber(h.nav_per_share, 1),
-      }
-    })
-
-    return {
-      wallet_address: String(raw.wallet_address || walletAddress),
-      total_value_usd: toNumber(raw.total_value_usd ?? raw.total_value_usdc, 0),
-      total_cost_basis: toNumber(raw.total_cost_basis, 0),
-      total_unrealized_pnl: toNumber(raw.total_unrealized_pnl ?? raw.total_pnl_usdc, 0),
-      total_unrealized_pnl_pct: toNumber(raw.total_unrealized_pnl_pct ?? raw.total_pnl_pct, 0),
-      holdings,
-    }
-  },
-
-  async getTransactions(walletAddress: string, fundId?: string, limit = 50): Promise<TransactionsResponse> {
-    const raw = await fetchJson<Array<Record<string, unknown>>>(
-      `/api/invest/transactions${qp({ wallet_address: walletAddress, fund_type: fundId, limit })}`
-    )
-
-    const transactions: Transaction[] = (raw || []).map((tx) => ({
-      id: String(tx.id ?? tx.tx_id ?? crypto.randomUUID()),
-      fund_id: normalizeFundId(tx.fund_id ?? tx.fund_type),
-      transaction_type: mapTxType(tx.transaction_type ?? tx.tx_type),
-      amount_usd: toNumber(tx.amount_usd ?? tx.usdc_amount, 0),
-      shares: toNumber(tx.shares ?? tx.shares_amount, 0),
-      nav_per_share: toNumber(tx.nav_per_share, 0),
-      status: mapStatus(tx.status),
-      created_at: String(tx.created_at || new Date().toISOString()),
-    }))
-
-    return { transactions, count: transactions.length }
-  },
-
-  async deposit(request: DepositRequest): Promise<TransactionResponse> {
-    const raw = await fetchJson<Record<string, unknown>>('/api/invest/deposit', {
-      method: 'POST',
-      body: JSON.stringify({
-        wallet_address: request.wallet_address,
-        fund_type: request.fund_id,
-        usdc_amount: request.amount_usd,
-        tx_hash: request.tx_hash,
-      }),
-    })
-
-    return {
-      id: String(raw.id ?? raw.tx_id ?? ''),
-      fund_id: normalizeFundId(raw.fund_id ?? raw.fund_type),
-      amount_usd: toNumber(raw.amount_usd ?? raw.usdc_amount, 0),
-      shares: toNumber(raw.shares ?? raw.shares_received, 0),
-      nav_per_share: toNumber(raw.nav_per_share, 0),
-      status: String(raw.status || 'COMPLETED').toUpperCase(),
-    }
-  },
-
-  async withdraw(request: WithdrawRequest): Promise<TransactionResponse> {
-    const raw = await fetchJson<Record<string, unknown>>('/api/invest/withdraw', {
-      method: 'POST',
-      body: JSON.stringify({
-        wallet_address: request.wallet_address,
-        fund_type: request.fund_id,
-        withdraw_all: request.withdraw_all,
-        shares_amount: request.shares,
-        usdc_amount: request.amount_usd,
-      }),
-    })
-
-    return {
-      id: String(raw.id ?? raw.request_id ?? ''),
-      fund_id: normalizeFundId(raw.fund_id ?? raw.fund_type),
-      amount_usd: toNumber(raw.amount_usd ?? raw.usdc_amount, 0),
-      shares: toNumber(raw.shares ?? raw.shares_redeemed, 0),
-      nav_per_share: toNumber(raw.nav_per_share, 0),
-      status: String(raw.status || 'PENDING').toUpperCase(),
     }
   },
 

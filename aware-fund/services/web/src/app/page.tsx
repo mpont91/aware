@@ -185,32 +185,8 @@ export default function DashboardPage() {
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-cyan-400/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/4" />
       </div>
 
-      {/* Investor CTA + ML Status Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Investor CTA */}
-        <div className="lg:col-span-2 rounded-xl bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/20 p-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-green-500/20">
-                <Wallet className="h-6 w-6 text-green-400" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-white text-lg">Start Investing in Smart Money</h3>
-                <p className="text-sm text-slate-400 mt-1">
-                  Deposit USDC to mirror top traders' positions automatically
-                </p>
-              </div>
-            </div>
-            <Link
-              href="/invest"
-              className="px-6 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-medium rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
-            >
-              <Wallet className="w-4 h-4" />
-              Invest Now
-            </Link>
-          </div>
-        </div>
-
+      {/* ML Status Row */}
+      <div className="grid grid-cols-1 gap-4">
         {/* ML Status Indicator */}
         <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-3">

@@ -45,7 +45,9 @@ from slowapi.errors import RateLimitExceeded
 from auth import verify_api_key, optional_api_key, is_auth_enabled
 
 # Investment module (Custodial MVP)
-from investments import router as invest_router, funds_router
+# invest_router (third-party deposits) is deliberately not registered:
+# that feature is a mock and is not exposed. See investments.py.
+from investments import funds_router
 
 # Add analytics to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'analytics'))
@@ -92,8 +94,8 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
-# Register investment routers
-app.include_router(invest_router)
+# Fund information only. The investor-facing deposit/withdraw router is not
+# registered: it books transactions without verifying them on-chain.
 app.include_router(funds_router)
 
 
@@ -2346,6 +2348,80 @@ async def get_trader_ml_enrichment(identifier: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get trader ML enrichment: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pnl/summary")
+async def get_pnl_summary():
+    """
+    Paper-trading P&L, aggregated across strategies.
+
+    Reads the latest snapshot written by the analytics strategy_pnl job. Returns
+    zeros with has_data=false before the first snapshot exists, so callers can
+    render a placeholder rather than an error.
+    """
+    try:
+        client = get_clickhouse_client()
+
+        result = client.query("""
+            SELECT
+                strategy,
+                realized_pnl,
+                unrealized_pnl,
+                total_pnl,
+                cost_usd,
+                stale_cost_usd,
+                positions,
+                positions_resolved,
+                calculated_at
+            FROM polybot.aware_strategy_pnl
+            WHERE calculated_at = (SELECT max(calculated_at) FROM polybot.aware_strategy_pnl)
+            ORDER BY strategy
+        """)
+
+        rows = result.result_rows
+        if not rows:
+            return {
+                "has_data": False,
+                "total_pnl": 0.0,
+                "realized_pnl": 0.0,
+                "unrealized_pnl": 0.0,
+                "roi_pct": 0.0,
+                "positions": 0,
+                "calculated_at": None,
+                "strategies": [],
+            }
+
+        strategies = [
+            {
+                "strategy": r[0],
+                "realized_pnl": float(r[1]),
+                "unrealized_pnl": float(r[2]),
+                "total_pnl": float(r[3]),
+                "positions": int(r[6]),
+                "positions_resolved": int(r[7]),
+            }
+            for r in rows
+        ]
+
+        total_pnl = sum(s["total_pnl"] for s in strategies)
+        # Cost of what could actually be priced; stale positions are excluded
+        # from the P&L above, so counting them here would understate the ROI.
+        priced_cost = sum(float(r[4]) - float(r[5]) for r in rows)
+
+        return {
+            "has_data": True,
+            "total_pnl": total_pnl,
+            "realized_pnl": sum(s["realized_pnl"] for s in strategies),
+            "unrealized_pnl": sum(s["unrealized_pnl"] for s in strategies),
+            "roi_pct": (total_pnl / priced_cost * 100) if priced_cost else 0.0,
+            "positions": sum(s["positions"] for s in strategies),
+            "calculated_at": rows[0][8].isoformat() if rows[0][8] else None,
+            "strategies": strategies,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get P&L summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
