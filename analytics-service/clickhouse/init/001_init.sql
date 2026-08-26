@@ -43,7 +43,3 @@ SELECT
   ifNull(_key, '') AS kafka_key
 FROM polybot.kafka_events_raw;
 
--- Local IDE user (no password; safe because ClickHouse ports are bound to 127.0.0.1 in docker-compose.analytics.yaml)
-CREATE USER IF NOT EXISTS intellij IDENTIFIED WITH no_password;
-GRANT SELECT ON polybot.* TO intellij;
-GRANT SELECT ON system.* TO intellij;

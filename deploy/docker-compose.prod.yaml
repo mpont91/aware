@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     volumes:
       - ../analytics-service/clickhouse/init:/docker-entrypoint-initdb.d:ro
-      - ../analytics-service/clickhouse/users.d/default-user.xml:/etc/clickhouse-server/users.d/default-user.xml:ro
+      - ../analytics-service/clickhouse/users.d/network-access.xml:/etc/clickhouse-server/users.d/network-access.xml:ro
       - clickhouse_data:/var/lib/clickhouse
     environment:
       CLICKHOUSE_DB: polybot

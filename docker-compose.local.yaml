@@ -47,7 +47,9 @@ services:
       - "9000:9000"
     volumes:
       - ./analytics-service/clickhouse/init:/docker-entrypoint-initdb.d:ro
-      - ./analytics-service/clickhouse/users.d/default-user.xml:/etc/clickhouse-server/users.d/default-user.xml:ro
+      # Dev-only IDE user; not mounted in production. See the file for why.
+      - ./analytics-service/clickhouse/dev/999_dev_user.sql:/docker-entrypoint-initdb.d/999_dev_user.sql:ro
+      - ./analytics-service/clickhouse/users.d/network-access.xml:/etc/clickhouse-server/users.d/network-access.xml:ro
       # PERSISTENT STORAGE - survives docker prune!
       - ./data/clickhouse:/var/lib/clickhouse
     healthcheck:
