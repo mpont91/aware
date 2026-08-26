@@ -11,7 +11,6 @@ import {
   ArrowDownRight,
   Loader2,
   AlertCircle,
-  Wallet,
   Brain,
   CheckCircle,
   AlertTriangle,
@@ -21,13 +20,13 @@ import { cn, formatNumber, formatCurrency, formatPercent } from '@/lib/utils'
 import { StatsCard } from '@/components/dashboard/StatsCard'
 import { TopTraders } from '@/components/dashboard/TopTraders'
 import { RecentActivity } from '@/components/dashboard/RecentActivity'
-import { IndexPerformance } from '@/components/dashboard/IndexPerformance'
+import { StrategyPerformance } from '@/components/dashboard/StrategyPerformance'
+import { PnlBanner } from '@/components/dashboard/PnlBanner'
 import { ConsensusAlerts } from '@/components/dashboard/ConsensusAlerts'
-import { api, DashboardStats, PSIIndex, MLHealthResponse } from '@/lib/api'
+import { api, DashboardStats, MLHealthResponse } from '@/lib/api'
 
 interface DashboardData {
   stats: DashboardStats | null
-  psi10: PSIIndex | null
   mlHealth: MLHealthResponse | null
   error: string | null
   isLoading: boolean
@@ -36,7 +35,6 @@ interface DashboardData {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData>({
     stats: null,
-    psi10: null,
     mlHealth: null,
     error: null,
     isLoading: true,
@@ -45,16 +43,14 @@ export default function DashboardPage() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
-        // Fetch stats, PSI-10, and ML health in parallel
-        const [statsData, psi10Data, mlHealthData] = await Promise.allSettled([
+        // Fetch stats and ML health in parallel
+        const [statsData, mlHealthData] = await Promise.allSettled([
           api.getDashboardStats(),
-          api.getPSI10(),
           api.getMLHealth(),
         ])
 
         setData({
           stats: statsData.status === 'fulfilled' ? statsData.value : null,
-          psi10: psi10Data.status === 'fulfilled' ? psi10Data.value : null,
           mlHealth: mlHealthData.status === 'fulfilled' ? mlHealthData.value : null,
           error: null,
           isLoading: false,
@@ -62,8 +58,7 @@ export default function DashboardPage() {
       } catch (err) {
         setData({
           stats: null,
-          psi10: null,
-          mlHealth: null,
+                mlHealth: null,
           error: 'Failed to load dashboard data. Make sure the API server is running.',
           isLoading: false,
         })
@@ -73,7 +68,7 @@ export default function DashboardPage() {
     fetchDashboardData()
   }, [])
 
-  const { stats, psi10, mlHealth, error, isLoading } = data
+  const { stats, mlHealth, error, isLoading } = data
 
   // Fallback values for display
   const displayStats = stats || {
@@ -147,43 +142,8 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* PSI Index Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-aware-600 via-aware-500 to-cyan-500 p-6">
-        <div className="relative z-10 flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="px-2 py-0.5 bg-white/20 rounded text-xs font-medium text-white">
-                FLAGSHIP INDEX
-              </span>
-            </div>
-            <h2 className="text-3xl font-bold text-white mb-1">
-              PSI-10 Index
-            </h2>
-            <p className="text-aware-100">
-              {psi10 ? `${psi10.trader_count} traders by Smart Money Score` : 'Top 10 traders by Smart Money Score'}
-            </p>
-          </div>
-          <div className="text-right">
-            {psi10 ? (
-              <>
-                <div className="text-4xl font-bold text-white">
-                  {psi10.trader_count} Traders
-                </div>
-                <div className="text-aware-100 text-sm mt-1">
-                  Total Weight: {(psi10.total_weight * 100).toFixed(0)}%
-                </div>
-              </>
-            ) : (
-              <div className="text-2xl font-bold text-white/60">
-                {isLoading ? 'Loading...' : 'Not available'}
-              </div>
-            )}
-          </div>
-        </div>
-        {/* Background decoration */}
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/4" />
-        <div className="absolute bottom-0 left-0 w-48 h-48 bg-cyan-400/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/4" />
-      </div>
+      {/* Headline P&L */}
+      <PnlBanner />
 
       {/* ML Status Row */}
       <div className="grid grid-cols-1 gap-4">
@@ -249,7 +209,7 @@ export default function DashboardPage() {
 
       {/* Secondary Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <IndexPerformance />
+        <StrategyPerformance />
         <RecentActivity />
       </div>
     </div>

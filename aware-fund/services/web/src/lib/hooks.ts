@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { api, DataFreshness, PnlSummary } from '@/lib/api'
+import { api, DataFreshness, PnlSummary, PnlHistory } from '@/lib/api'
 
 interface DataFreshnessState {
   freshness: DataFreshness | null
@@ -81,4 +81,40 @@ export function usePnlSummary(refreshIntervalMs = 60000): PnlSummaryState {
   }, [fetchPnl, refreshIntervalMs])
 
   return { pnl, isLoading, error, refetch: fetchPnl }
+}
+
+
+interface PnlHistoryState {
+  history: PnlHistory | null
+  isLoading: boolean
+  error: string | null
+}
+
+/** P&L over time. Same slow cadence as the summary: new points only appear
+ *  when the analytics pipeline cycles. */
+export function usePnlHistory(days = 7, refreshIntervalMs = 60000): PnlHistoryState {
+  const [history, setHistory] = useState<PnlHistory | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      setError(null)
+      setHistory(await api.getPnlHistory(days))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load P&L history')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [days])
+
+  useEffect(() => {
+    setIsLoading(true)
+    fetchHistory()
+
+    const interval = setInterval(fetchHistory, refreshIntervalMs)
+    return () => clearInterval(interval)
+  }, [fetchHistory, refreshIntervalMs])
+
+  return { history, isLoading, error }
 }

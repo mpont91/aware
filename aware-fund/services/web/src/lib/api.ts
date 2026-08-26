@@ -280,6 +280,13 @@ export interface PnlSummary {
   }>
 }
 
+export interface PnlHistory {
+  days: number
+  strategies: string[]
+  point_count: number
+  points: Array<Record<string, number | string>>
+}
+
 export interface DataFreshness {
   status: 'fresh' | 'stale' | 'outdated' | string
   status_emoji: string
@@ -435,6 +442,10 @@ export const api = {
 
   async getPnlSummary(): Promise<PnlSummary> {
     return fetchJson<PnlSummary>('/api/pnl/summary')
+  },
+
+  async getPnlHistory(days = 7): Promise<PnlHistory> {
+    return fetchJson<PnlHistory>(`/api/pnl/history${qp({ days })}`)
   },
 
   async getDashboardStats(): Promise<DashboardStats> {

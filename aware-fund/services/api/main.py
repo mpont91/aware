@@ -2437,6 +2437,52 @@ async def get_pnl_summary():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/pnl/history")
+async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
+    """
+    P&L over time, one series per strategy.
+
+    Built from the snapshots the analytics job writes each run, so the
+    resolution is however often the pipeline cycles. Returns points shaped for
+    charting: one entry per timestamp with a key per strategy.
+    """
+    try:
+        client = get_clickhouse_client()
+
+        result = client.query("""
+            SELECT
+                calculated_at,
+                strategy,
+                total_pnl
+            FROM polybot.aware_strategy_pnl
+            WHERE calculated_at >= now() - INTERVAL %(days)s DAY
+            ORDER BY calculated_at, strategy
+        """, parameters={'days': days})
+
+        # Pivot to one row per timestamp so a chart can read it directly.
+        points: dict = {}
+        strategies: list = []
+        for calculated_at, strategy, total_pnl in result.result_rows:
+            key = calculated_at.isoformat()
+            points.setdefault(key, {'timestamp': key})
+            points[key][strategy] = round(float(total_pnl), 2)
+            if strategy not in strategies:
+                strategies.append(strategy)
+
+        series = sorted(points.values(), key=lambda p: p['timestamp'])
+
+        return {
+            'days': days,
+            'strategies': strategies,
+            'point_count': len(series),
+            'points': series,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get P&L history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ml/health")
 async def get_ml_health():
     """
