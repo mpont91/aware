@@ -99,11 +99,11 @@ export function FundPnlChart({
         <p className="text-white font-semibold">
           P&L: {formatCurrency(item.nav)}
         </p>
-        <p className={cn(
-          'text-sm',
-          item.return >= 0 ? 'text-green-400' : 'text-red-400'
-        )}>
-          {item.return >= 0 ? '+' : ''}{item.return.toFixed(2)}% daily
+        {/* Realised is settled; unrealised still moves with the market. */}
+        <p className="text-xs text-slate-400 mt-1">
+          {formatCurrency(item.realized)} realized
+          {' · '}
+          {formatCurrency(item.unrealized)} unrealized
         </p>
       </div>
     )
