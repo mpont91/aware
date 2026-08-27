@@ -592,8 +592,16 @@ class PSIIndexBuilder:
         elif config.weighting_method == WeightingMethod.SCORE_WEIGHTED:
             # Weight by Smart Money Score
             total_score = sum(t['total_score'] for t in traders)
+            if total_score <= 0:
+                logger.warning(
+                    "%s: no usable scores across %d constituents; falling back to "
+                    "equal weight. Zero weights would size every mirrored position "
+                    "to nothing and the fund would never trade.",
+                    config.index_type.value, len(traders),
+                )
             for t in traders:
-                weight = t['total_score'] / total_score if total_score > 0 else 0
+                weight = (t['total_score'] / total_score if total_score > 0
+                          else 1.0 / len(traders))
                 weight = min(weight, config.max_weight_per_trader)
                 constituents.append(IndexConstituent(
                     proxy_address=t['proxy_address'],
@@ -606,11 +614,25 @@ class PSIIndexBuilder:
                 ))
 
         elif config.weighting_method == WeightingMethod.SHARPE_WEIGHTED:
-            # Weight by Sharpe ratio (risk-adjusted)
+            # Weight by Sharpe ratio (risk-adjusted).
+            #
+            # Sharpe is not currently computed for any trader, so this sum is
+            # zero and every weight came out zero — which is how PSI-CRYPTO
+            # ended up with 15 constituents and no position it could ever size.
+            # An index with members must have weights that sum to one; if the
+            # chosen signal cannot rank them, equal weight is the honest
+            # fallback.
             total_sharpe = sum(max(0, t['sharpe_ratio']) for t in traders)
+            if total_sharpe <= 0:
+                logger.warning(
+                    "%s: no usable Sharpe ratios across %d constituents; falling "
+                    "back to equal weight.",
+                    config.index_type.value, len(traders),
+                )
             for t in traders:
                 sharpe = max(0, t['sharpe_ratio'])
-                weight = sharpe / total_sharpe if total_sharpe > 0 else 0
+                weight = (sharpe / total_sharpe if total_sharpe > 0
+                          else 1.0 / len(traders))
                 weight = min(weight, config.max_weight_per_trader)
                 constituents.append(IndexConstituent(
                     proxy_address=t['proxy_address'],

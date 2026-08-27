@@ -115,6 +115,8 @@ function constituentName(c: IndexConstituent): string {
 
 function FundPageContent() {
   const searchParams = useSearchParams()
+  // PSI-10 is the landing fund because it is first in the display order the
+  // API defines, not because it is the best performing one — that changes.
   const typeParam = searchParams.get('type') || 'PSI-10'
 
   const [selectedFund, setSelectedFund] = useState(typeParam)

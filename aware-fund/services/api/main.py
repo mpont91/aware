@@ -2882,11 +2882,30 @@ async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
 # Mirrors the multi-fund allocation in strategy-service's application-*.yaml.
 # Keep the two in step: this is what the dashboard reports as allocated, and a
 # fund missing here is a fund the dashboard will not list at all.
+#
+# Declared in display order — the mirror funds first, broad before sectorial,
+# then the active ones. Every list of funds is rendered in this order, so a
+# fund keeps its place instead of moving around as the numbers change.
 FUND_CAPITAL_PCT = {
-    'PSI-10': 15, 'PSI-25': 10, 'PSI-CRYPTO': 10, 'PSI-POLITICS': 10,
-    'PSI-SPORTS': 5, 'PSI-ALPHA': 10, 'ALPHA-ARB': 15, 'ALPHA-INSIDER': 17,
+    'PSI-10': 15,
+    'PSI-25': 10,
+    'PSI-CRYPTO': 10,
+    'PSI-POLITICS': 10,
+    'PSI-SPORTS': 5,
+    'PSI-ALPHA': 10,
+    'ALPHA-ARB': 15,
+    'ALPHA-INSIDER': 17,
     'ALPHA-EDGE': 8,
 }
+
+FUND_DISPLAY_ORDER = tuple(FUND_CAPITAL_PCT)
+
+
+def _fund_sort_key(fund_id: str) -> int:
+    """Position in FUND_DISPLAY_ORDER; anything unlisted sorts to the end."""
+    upper = fund_id.upper()
+    return (FUND_DISPLAY_ORDER.index(upper)
+            if upper in FUND_DISPLAY_ORDER else len(FUND_DISPLAY_ORDER))
 
 # Matches the descriptions in FundType.java.
 FUND_DESCRIPTIONS = {
@@ -3070,7 +3089,7 @@ async def get_funds_summary():
             'total_capital': float(os.getenv('TOTAL_CAPITAL_USD', '100000')),
             'total_invested': sum(f['invested'] for f in funds),
             'total_pnl': sum(f['total_pnl'] for f in funds),
-            'funds': sorted(funds, key=lambda f: -f['invested']),
+            'funds': sorted(funds, key=lambda f: _fund_sort_key(f['fund_id'])),
         }
 
     except HTTPException:
@@ -3176,7 +3195,7 @@ async def get_fund_comparison(days: int = Query(default=30, ge=1, le=365)):
 
         return {
             'days': days,
-            'funds': sorted(funds),
+            'funds': sorted(funds, key=_fund_sort_key),
             'point_count': len(points),
             'points': sorted(points.values(), key=lambda p: p['timestamp']),
         }
