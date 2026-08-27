@@ -1913,92 +1913,133 @@ async def get_fund_positions(fund_id: str = Query(default="PSI-10")):
     """
     Positions the fund still holds.
 
-    Built from aware_fund_executions rather than aware_fund_positions: nothing
-    writes to that table, so it reported no positions for every fund while the
-    funds were plainly trading. Buys are netted against sells, markets that have
-    resolved are dropped, and what is left is marked to the last print on the
-    token.
+    Read from the marked positions the P&L job produces, not from
+    aware_fund_positions: nothing writes to that table, so it reported no
+    positions for every fund while the funds were plainly trading.
+
+    Only markets that have not resolved appear. A position the job could not
+    mark is listed without a price rather than valued at a stale quote.
     """
     try:
         client = get_clickhouse_client()
 
-        rows = client.query("""
-            WITH netted AS (
-                SELECT
-                    token_id,
-                    any(market_slug) AS market_slug,
-                    any(outcome) AS outcome,
-                    sumIf(toFloat64(fund_shares), signal_type = 'BUY')
-                        - sumIf(toFloat64(fund_shares), signal_type = 'SELL') AS shares,
-                    sumIf(toFloat64(fund_shares) * toFloat64(execution_price), signal_type = 'BUY')
-                        - sumIf(toFloat64(fund_shares) * toFloat64(execution_price), signal_type = 'SELL') AS cost_usd
-                FROM polybot.aware_fund_executions
-                WHERE upper(fund_id) = upper(%(fund_id)s)
-                GROUP BY token_id
-            )
-            SELECT
-                n.token_id,
-                n.market_slug,
-                n.outcome,
-                n.shares,
-                n.cost_usd
-            FROM netted n
-            WHERE n.shares > 0.01
-              AND n.market_slug NOT IN (
-                  SELECT market_slug
-                  FROM (SELECT * FROM polybot.aware_market_resolutions FINAL)
-                  WHERE is_resolved = 1
-              )
-            ORDER BY n.cost_usd DESC
-        """, parameters={'fund_id': fund_id}).result_rows
+        # ALPHA-ARB is the complete-set arbitrage engine. It trades directly
+        # rather than mirroring anyone, so it has no rows in the executions
+        # table; its positions are the open GABAGOOL ones, already netted and
+        # marked by the P&L job.
+        if fund_id.upper() == 'ALPHA-ARB':
+            gab = client.query("""
+                SELECT token_id, market_slug, title, outcome, net_shares,
+                       cost_usd, avg_price, mark_status, mark_price, value_usd,
+                       pnl_usd, mark_age_min
+                FROM polybot.aware_strategy_pnl_positions
+                WHERE strategy = 'GABAGOOL'
+                  AND is_resolved = 0
+                  AND calculated_at = (
+                      SELECT max(calculated_at)
+                      FROM polybot.aware_strategy_pnl_positions
+                      WHERE strategy = 'GABAGOOL'
+                  )
+                ORDER BY cost_usd DESC
+            """).result_rows
 
-        if not rows:
+            out = []
+            for (token_id, market_slug, title, outcome, shares, cost_usd,
+                 avg_price, mark_status, mark_price, value_usd, pnl_usd,
+                 mark_age_min) in gab:
+                # STALE means the job found no fresh print, so value_usd and
+                # pnl_usd carry no meaning for that row.
+                priced = mark_status != 'STALE'
+                cost_usd = float(cost_usd)
+                out.append(FundPosition(
+                    token_id=token_id,
+                    market_slug=market_slug,
+                    title=title or market_slug,
+                    outcome=outcome,
+                    shares=round(float(shares), 2),
+                    cost_usd=round(cost_usd, 2),
+                    avg_entry_price=round(float(avg_price), 4),
+                    current_price=round(float(mark_price), 4) if priced else None,
+                    current_value=round(float(value_usd), 2) if priced else None,
+                    unrealized_pnl=round(float(pnl_usd), 2) if priced else None,
+                    unrealized_pnl_pct=(
+                        round(100 * float(pnl_usd) / cost_usd, 2)
+                        if priced and cost_usd else None
+                    ),
+                    priced_at=None,
+                ))
+            return out
+
+        # Mirror funds: the positions actually held come from the simulator's
+        # fills, the same rows the P&L job marks — not from the executions
+        # table, which records what each fund asked for. A paper order that
+        # never filled is an intention, not a position, and counting those made
+        # the position list disagree with the P&L above it.
+        #
+        # Several funds copy the same token, so a fill cannot be attributed to
+        # one of them exactly. Each token is apportioned by how many shares each
+        # fund requested, which is how the P&L splits it too, so the two agree
+        # by construction.
+        open_rows = client.query("""
+            SELECT token_id, market_slug, title, outcome, net_shares, cost_usd,
+                   avg_price, mark_status, mark_price, value_usd, pnl_usd
+            FROM polybot.aware_strategy_pnl_positions
+            WHERE strategy = 'MIRROR'
+              AND is_resolved = 0
+              AND calculated_at = (
+                  SELECT max(calculated_at)
+                  FROM polybot.aware_strategy_pnl_positions
+                  WHERE strategy = 'MIRROR'
+              )
+        """).result_rows
+
+        if not open_rows:
             return []
 
-        tokens = tuple({r[0] for r in rows})
-        mark_rows = client.query("""
-            SELECT token_id, argMax(price, ts) AS last_price, max(ts) AS last_ts,
-                   argMax(title, ts) AS title
-            FROM polybot.aware_global_trades
+        weight_rows = client.query("""
+            SELECT token_id, fund_id, sum(toFloat64(fund_shares)) AS requested
+            FROM polybot.aware_fund_executions
             WHERE token_id IN %(tokens)s
-              AND ts >= now() - INTERVAL %(hours)s HOUR
-            GROUP BY token_id
-        """, parameters={'tokens': tokens, 'hours': TRADER_MARK_MAX_AGE_HOURS}).result_rows
-        marks = {r[0]: (float(r[1]), r[2], r[3]) for r in mark_rows}
+            GROUP BY token_id, fund_id
+        """, parameters={'tokens': tuple({r[0] for r in open_rows})}).result_rows
 
-        # Titles for the unpriced ones too, so the row is still readable.
-        title_rows = client.query("""
-            SELECT token_id, argMax(title, ts)
-            FROM polybot.aware_global_trades
-            WHERE token_id IN %(tokens)s
-            GROUP BY token_id
-        """, parameters={'tokens': tokens}).result_rows
-        titles = {r[0]: r[1] for r in title_rows}
+        weights: dict[str, dict[str, float]] = {}
+        for token_id, fid, requested in weight_rows:
+            weights.setdefault(token_id, {})[fid.upper()] = float(requested)
 
+        wanted = fund_id.upper()
         positions = []
-        for token_id, market_slug, outcome, shares, cost_usd in rows:
-            shares = float(shares)
-            cost_usd = float(cost_usd)
-            mark = marks.get(token_id)
-            value = mark[0] * shares if mark else None
+        for (token_id, market_slug, title, outcome, net_shares, cost_usd,
+             avg_price, mark_status, mark_price, value_usd, pnl_usd) in open_rows:
+            token_weights = weights.get(token_id, {})
+            total = sum(token_weights.values())
+            requested = token_weights.get(wanted, 0.0)
+            if not total or not requested:
+                continue
+            share = requested / total
+
+            shares = float(net_shares) * share
+            cost = float(cost_usd) * share
+            priced = mark_status != 'STALE'
             positions.append(FundPosition(
                 token_id=token_id,
                 market_slug=market_slug,
-                title=titles.get(token_id) or market_slug,
+                title=title or market_slug,
                 outcome=outcome,
                 shares=round(shares, 2),
-                cost_usd=round(cost_usd, 2),
-                avg_entry_price=round(cost_usd / shares, 4) if shares else 0.0,
-                current_price=round(mark[0], 4) if mark else None,
-                current_value=round(value, 2) if value is not None else None,
-                unrealized_pnl=round(value - cost_usd, 2) if value is not None else None,
+                cost_usd=round(cost, 2),
+                avg_entry_price=round(float(avg_price), 4),
+                current_price=round(float(mark_price), 4) if priced else None,
+                current_value=round(float(value_usd) * share, 2) if priced else None,
+                unrealized_pnl=round(float(pnl_usd) * share, 2) if priced else None,
                 unrealized_pnl_pct=(
-                    round(100 * (value - cost_usd) / cost_usd, 2)
-                    if value is not None and cost_usd else None
+                    round(100 * float(pnl_usd) / float(cost_usd), 2)
+                    if priced and float(cost_usd) else None
                 ),
-                priced_at=utc_iso(mark[1]) if mark else None,
+                priced_at=None,
             ))
 
+        positions.sort(key=lambda p: -p.cost_usd)
         return positions
 
     except HTTPException:
