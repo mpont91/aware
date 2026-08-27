@@ -82,16 +82,12 @@ class ResolutionTracker:
             logger.info("No new condition IDs to check")
             return 0
 
-        # Step 3: Fetch resolved markets from Gamma API
-        resolutions = self._fetch_resolved_markets(pending_ids)
-
-        # Step 4: Store resolutions
-        if resolutions:
-            stored = self._store_resolutions(resolutions)
+        # Step 3: Fetch and store in batches. Storing as we go keeps peak
+        # memory flat regardless of how large the backlog is.
+        stored = self._fetch_and_store(pending_ids)
+        if stored:
             logger.info(f"Stored {stored} market resolutions")
-            return stored
-
-        return 0
+        return stored
 
     def _get_traded_condition_ids(self) -> list[str]:
         """Get unique condition IDs from our trades table"""
@@ -127,22 +123,39 @@ class ResolutionTracker:
     # around 3KB, well inside what the API and any proxy will accept.
     CONDITION_ID_BATCH = 40
 
-    def _fetch_resolved_markets(self, wanted_condition_ids: set[str]) -> list[MarketResolution]:
+    # Ceiling on how many IDs one run will check. The backlog grows every day
+    # as more markets are traded, and an unbounded run held every parsed
+    # response in memory at once — enough to OOM the host once the backlog
+    # passed a few thousand. Whatever is left over is picked up next cycle,
+    # and resolutions do not change once recorded, so nothing is lost.
+    MAX_IDS_PER_RUN = 2000
+
+    def _fetch_and_store(self, wanted_condition_ids: set[str]) -> int:
         """
-        Fetch resolutions for the given condition IDs from the Gamma API.
+        Look up resolutions for the given condition IDs and store them as we go.
 
         The API does support condition_ids filtering, but only returns closed
         markets when closed=true is passed, and silently caps results at 20
         unless limit is set. Missing either turns a direct lookup into an empty
         response, which is why this used to page blindly through every closed
-        market on Polymarket instead: that walked thousands of unrelated markets
-        and died on a 422 past offset 2100, so most resolutions were never found.
+        market on Polymarket instead.
+
+        Each batch is written before the next is fetched, so peak memory stays
+        flat no matter how big the backlog is. Capped at MAX_IDS_PER_RUN;
+        the rest is picked up on the next cycle.
         """
-        resolutions = []
         wanted = sorted(wanted_condition_ids)
+        total_pending = len(wanted)
+        if total_pending > self.MAX_IDS_PER_RUN:
+            wanted = wanted[:self.MAX_IDS_PER_RUN]
+            logger.info(
+                f"Checking {len(wanted)} of {total_pending} pending IDs this run; "
+                f"the remainder follows next cycle"
+            )
+        else:
+            logger.info(f"Fetching resolutions for {len(wanted)} condition IDs...")
 
-        logger.info(f"Fetching resolutions for {len(wanted)} condition IDs...")
-
+        stored = 0
         for start in range(0, len(wanted), self.CONDITION_ID_BATCH):
             batch = wanted[start:start + self.CONDITION_ID_BATCH]
             try:
@@ -155,12 +168,14 @@ class ResolutionTracker:
                 response = self.http_client.get(f"{self.GAMMA_API_BASE}/markets", params=params)
                 response.raise_for_status()
 
+                resolutions = []
                 for market in response.json():
                     parsed = self._parse_market(market)
                     if parsed and parsed.is_resolved:
                         resolutions.append(parsed)
-                        logger.debug(f"Found resolution: {parsed.condition_id[:20]}... "
-                                     f"-> {parsed.winning_outcome}")
+
+                if resolutions:
+                    stored += self._store_resolutions(resolutions)
 
                 time.sleep(0.2)  # Rate limiting
 
@@ -169,8 +184,8 @@ class ResolutionTracker:
                 logger.warning(f"Error fetching resolutions for batch at {start}: {e}")
                 continue
 
-        logger.info(f"Fetched {len(resolutions)} resolutions for {len(wanted)} requested")
-        return resolutions
+        logger.info(f"Fetched {stored} resolutions for {len(wanted)} requested")
+        return stored
 
     def _fetch_single_market(self, condition_id: str) -> Optional[MarketResolution]:
         """Fetch a single market by condition ID (fallback method)"""
