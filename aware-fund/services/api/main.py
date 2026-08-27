@@ -2821,6 +2821,62 @@ async def get_funds_summary():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/fund/pnl-history")
+async def get_fund_pnl_history(
+    fund_id: str = Query(...),
+    days: int = Query(default=7, ge=1, le=90),
+):
+    """
+    P&L over time for one fund, from the aware_fund_pnl snapshots.
+
+    Replaces charting nav_per_share, which is 1.0 at every point for every fund
+    because the NAV calculation has no deposits or positions to work from.
+    """
+    try:
+        client = get_clickhouse_client()
+        fund = fund_id.upper()
+
+        # ALPHA-ARB trades directly rather than mirroring, so its history lives
+        # under the GABAGOOL strategy.
+        if fund == 'ALPHA-ARB':
+            rows = client.query("""
+                SELECT calculated_at, total_pnl, realized_pnl, unrealized_pnl
+                FROM polybot.aware_strategy_pnl
+                WHERE strategy = 'GABAGOOL'
+                  AND calculated_at >= now() - INTERVAL %(days)s DAY
+                ORDER BY calculated_at
+            """, parameters={'days': days}).result_rows
+        else:
+            rows = client.query("""
+                SELECT calculated_at, total_pnl, realized_pnl, unrealized_pnl
+                FROM polybot.aware_fund_pnl
+                WHERE fund_id = %(fund_id)s
+                  AND calculated_at >= now() - INTERVAL %(days)s DAY
+                ORDER BY calculated_at
+            """, parameters={'fund_id': fund, 'days': days}).result_rows
+
+        return {
+            'fund_id': fund,
+            'days': days,
+            'point_count': len(rows),
+            'points': [
+                {
+                    'timestamp': r[0].isoformat(),
+                    'total_pnl': round(float(r[1]), 2),
+                    'realized_pnl': round(float(r[2]), 2),
+                    'unrealized_pnl': round(float(r[3]), 2),
+                }
+                for r in rows
+            ],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get fund P&L history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ml/health")
 async def get_ml_health():
     """

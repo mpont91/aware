@@ -14,7 +14,7 @@ import {
 } from 'recharts'
 import { Loader2 } from 'lucide-react'
 import { cn, formatCurrency } from '@/lib/utils'
-import { api, NAVDataPoint } from '@/lib/api'
+import { api, FundPnlHistory } from '@/lib/api'
 
 interface NAVChartProps {
   fundId: string
@@ -36,7 +36,7 @@ export function NAVChart({
   showControls = true,
   className,
 }: NAVChartProps) {
-  const [data, setData] = useState<NAVDataPoint[]>([])
+  const [data, setData] = useState<FundPnlHistory['points']>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRange, setSelectedRange] = useState(30)
@@ -47,10 +47,13 @@ export function NAVChart({
       setIsLoading(true)
       setError(null)
       try {
-        const response = await api.getFundNAVHistory(fundId, selectedRange)
-        setData(response?.data_points || [])
+        // P&L rather than NAV: nav_per_share is 1.0 at every point for every
+        // fund, since the NAV calculation has no deposits or positions to
+        // work from. This charts what the fund actually made.
+        const response = await api.getFundPnlHistory(fundId, selectedRange)
+        setData(response?.points || [])
       } catch (err) {
-        console.error('Failed to fetch NAV history:', err)
+        console.error('Failed to fetch fund P&L history:', err)
         setError('Failed to load chart data')
         setData([])
       } finally {
@@ -72,15 +75,18 @@ export function NAVChart({
       day: 'numeric',
       year: 'numeric',
     }),
-    nav: point.nav_per_share,
-    return: point.daily_return * 100,
+    // Cumulative P&L at that moment, in dollars.
+    nav: point.total_pnl,
+    realized: point.realized_pnl,
+    unrealized: point.unrealized_pnl,
   }))
 
-  // Calculate performance
-  const firstNav = data[0]?.nav_per_share || 1
-  const lastNav = data[data.length - 1]?.nav_per_share || 1
-  const performancePct = ((lastNav - firstNav) / firstNav) * 100
-  const isPositive = performancePct >= 0
+  // Change across the visible window, in dollars: a percentage would need a
+  // capital base, and the fund's deployed capital moves as positions rotate.
+  const firstPnl = data[0]?.total_pnl ?? 0
+  const lastPnl = data[data.length - 1]?.total_pnl ?? 0
+  const changeUsd = lastPnl - firstPnl
+  const isPositive = changeUsd >= 0
 
   // Custom tooltip
   const CustomTooltip = ({ active, payload }: any) => {
@@ -91,7 +97,7 @@ export function NAVChart({
       <div className="bg-slate-800 border border-slate-700 rounded-lg shadow-xl p-3">
         <p className="text-slate-400 text-xs mb-1">{item.fullDate}</p>
         <p className="text-white font-semibold">
-          NAV: {formatCurrency(item.nav)}
+          P&L: {formatCurrency(item.nav)}
         </p>
         <p className={cn(
           'text-sm',
@@ -152,7 +158,7 @@ export function NAVChart({
             'px-3 py-1.5 rounded-lg text-sm font-medium',
             isPositive ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
           )}>
-            {isPositive ? '+' : ''}{performancePct.toFixed(2)}%
+            {isPositive ? '+' : '\u2212'}{formatCurrency(Math.abs(changeUsd))}
           </div>
         </div>
       )}
@@ -205,44 +211,3 @@ export function NAVChart({
     </div>
   )
 }
-
-// Mini version for fund cards
-export function NAVChartMini({
-  data,
-  height = 60,
-  className,
-}: {
-  data: NAVDataPoint[]
-  height?: number
-  className?: string
-}) {
-  if (!data || data.length === 0) {
-    return <div className={className} style={{ height }} />
-  }
-
-  const chartData = data.map(point => ({
-    nav: point.nav_per_share,
-  }))
-
-  const firstNav = data[0]?.nav_per_share || 1
-  const lastNav = data[data.length - 1]?.nav_per_share || 1
-  const isPositive = lastNav >= firstNav
-
-  return (
-    <div className={className} style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData}>
-          <Line
-            type="monotone"
-            dataKey="nav"
-            stroke={isPositive ? '#22c55e' : '#ef4444'}
-            strokeWidth={1.5}
-            dot={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  )
-}
-
-export default NAVChart

@@ -309,6 +309,18 @@ export interface FundsSummary {
   funds: FundSummaryEntry[]
 }
 
+export interface FundPnlHistory {
+  fund_id: string
+  days: number
+  point_count: number
+  points: Array<{
+    timestamp: string
+    total_pnl: number
+    realized_pnl: number
+    unrealized_pnl: number
+  }>
+}
+
 export interface DataFreshness {
   status: 'fresh' | 'stale' | 'outdated' | string
   status_emoji: string
@@ -464,6 +476,10 @@ export const api = {
 
   async getPnlSummary(): Promise<PnlSummary> {
     return fetchJson<PnlSummary>('/api/pnl/summary')
+  },
+
+  async getFundPnlHistory(fundId: string, days = 30): Promise<FundPnlHistory> {
+    return fetchJson<FundPnlHistory>(`/api/fund/pnl-history${qp({ fund_id: fundId, days })}`)
   },
 
   async getFundsSummary(): Promise<FundsSummary> {

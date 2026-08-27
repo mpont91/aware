@@ -317,7 +317,7 @@ function FundPageContent() {
 
       {!isLoading && overview && (
         <>
-          {/* NAV Card - Hero */}
+          {/* Headline figures */}
           <div className={cn(
             'rounded-xl border p-6',
             isMirrorFund
@@ -388,11 +388,11 @@ function FundPageContent() {
             </div>
           </div>
 
-          {/* NAV Chart */}
+          {/* P&L over time */}
           <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
             <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
               <Activity className="w-5 h-5 text-aware-400" />
-              NAV History
+              P&L History
             </h3>
             <NAVChart fundId={selectedFund} height={300} />
           </div>
