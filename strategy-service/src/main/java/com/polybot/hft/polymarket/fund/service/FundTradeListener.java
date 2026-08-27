@@ -96,7 +96,13 @@ public class FundTradeListener {
      * Runs every second to catch trades quickly.
      */
     @Scheduled(fixedRate = 1000)
-    public void pollForTrades() {
+    // Synchronized because the multi-fund scheduler can overlap invocations:
+    // pollPsiMirrorFunds runs at a fixed 1s rate over every fund, and when a
+    // round takes longer than that the next one starts on another thread. Two
+    // threads then read the same lastPollTime, query the same window and queue
+    // the same trade twice, which was visible in the logs as one signal emitted
+    // by two scheduling threads a millisecond apart.
+    public synchronized void pollForTrades() {
         if (!config.enabled()) {
             return;
         }
