@@ -41,9 +41,12 @@ export function PnlBanner() {
   }
 
   const up = pnl.total_pnl >= 0
-  const best = [...pnl.strategies].sort((a, b) => b.total_pnl - a.total_pnl)[0]
-  const worst = [...pnl.strategies].sort((a, b) => a.total_pnl - b.total_pnl)[0]
-  const showWorst = worst && best && worst.strategy !== best.strategy
+  // Listed in a fixed order, not ranked. There are two strategies and there
+  // will stay two, so "best" and "worst" said nothing that the two figures
+  // side by side do not say already.
+  const strategies = [...pnl.strategies].sort((a, b) =>
+    a.strategy.localeCompare(b.strategy)
+  )
 
   const money = (v: number) =>
     `${v >= 0 ? '+' : '−'}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
@@ -127,34 +130,19 @@ export function PnlBanner() {
         </div>
 
         <div className="flex gap-8">
-          {best && (
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Best strategy</p>
-              <p className="text-sm font-medium text-white">{best.strategy}</p>
+          {strategies.map((s) => (
+            <div key={s.strategy}>
+              <p className="text-xs text-slate-500 mb-1">{s.strategy}</p>
               <p
                 className={[
                   'text-lg font-semibold tabular-nums',
-                  best.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400',
+                  s.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400',
                 ].join(' ')}
               >
-                {money(best.total_pnl)}
+                {money(s.total_pnl)}
               </p>
             </div>
-          )}
-          {showWorst && (
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Worst strategy</p>
-              <p className="text-sm font-medium text-white">{worst.strategy}</p>
-              <p
-                className={[
-                  'text-lg font-semibold tabular-nums',
-                  worst.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400',
-                ].join(' ')}
-              >
-                {money(worst.total_pnl)}
-              </p>
-            </div>
-          )}
+          ))}
         </div>
       </div>
     </div>

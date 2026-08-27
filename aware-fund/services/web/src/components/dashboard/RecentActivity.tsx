@@ -25,7 +25,6 @@ export function RecentActivity() {
   useEffect(() => {
     async function fetchActivity() {
       try {
-        setIsLoading(true)
         const response = await api.getRecentActivity(50, 20)  // min_score=50, limit=20
 
         // Transform API response to ActivityItem format
@@ -62,7 +61,10 @@ export function RecentActivity() {
 
     fetchActivity()
 
-    // Refresh every 30 seconds for live feel
+    // Refresh every 30 seconds for live feel. The refetch deliberately does
+    // NOT flip back to the loading state: blanking the list to a spinner every
+    // half minute reads as the page reloading itself. The rows stay on screen
+    // and are replaced once the new ones arrive.
     const interval = setInterval(fetchActivity, 30000)
     return () => clearInterval(interval)
   }, [])

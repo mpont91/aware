@@ -90,16 +90,20 @@ interface IndexConstituent {
 }
 
 // Fund type configurations
-const fundTypes = [
-  { id: 'PSI-10', name: 'PSI-10', type: 'MIRROR', description: 'Top 10 Smart Money traders' },
-  { id: 'PSI-25', name: 'PSI-25', type: 'MIRROR', description: 'Top 25 Smart Money traders' },
-  { id: 'PSI-CRYPTO', name: 'PSI-CRYPTO', type: 'MIRROR', description: 'Crypto market specialists' },
-  { id: 'PSI-POLITICS', name: 'PSI-POLITICS', type: 'MIRROR', description: 'Political markets experts' },
-  { id: 'PSI-SPORTS', name: 'PSI-SPORTS', type: 'MIRROR', description: 'Sports betting specialists' },
-  { id: 'ALPHA-ARB', name: 'ALPHA-ARB', type: 'ACTIVE', description: 'Complete-set arbitrage' },
-  { id: 'ALPHA-INSIDER', name: 'ALPHA-INSIDER', type: 'ACTIVE', description: 'Insider activity signals' },
-  { id: 'ALPHA-EDGE', name: 'ALPHA-EDGE', type: 'ACTIVE', description: 'ML edge predictions' },
-]
+/**
+ * The funds are configured on the strategy service, not here. This page used
+ * to keep its own hardcoded copy of the list, which had drifted: it carried
+ * PSI-POLITICS, which is not enabled, and was missing PSI-ALPHA, which is. A
+ * fund absent from the local list fell through `|| fundTypes[0]`, so opening
+ * PSI-ALPHA showed PSI-10's name and description above PSI-ALPHA's numbers.
+ * The list now comes from the API, so the two cannot drift again.
+ */
+interface FundTypeInfo {
+  id: string
+  name: string
+  type: string
+  description: string
+}
 
 // username is often empty; fall back to the pseudonym, then the address.
 function constituentName(c: IndexConstituent): string {
@@ -122,6 +126,26 @@ function FundPageContent() {
   const [error, setError] = useState<string | null>(null)
   const [comparisonTimeframe, setComparisonTimeframe] = useState('1M')
   const [comparison, setComparison] = useState<FundComparison | null>(null)
+  const [fundTypes, setFundTypes] = useState<FundTypeInfo[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getFundsSummary()
+      .then((s) => {
+        if (cancelled) return
+        setFundTypes(
+          s.funds.map((f) => ({
+            id: f.fund_id,
+            name: f.fund_id,
+            type: f.category,
+            description: f.description,
+          }))
+        )
+      })
+      .catch(() => { if (!cancelled) setFundTypes([]) })
+    return () => { cancelled = true }
+  }, [])
 
   // Real ROI per fund over time, for the comparison chart below.
   useEffect(() => {
@@ -157,14 +181,14 @@ function FundPageContent() {
     return `${Math.round(days)} days of history`
   })()
 
-  // Get current fund config
-  const currentFund = fundTypes.find(f => f.id === selectedFund) || fundTypes[0]
-  const isMirrorFund = currentFund.type === 'MIRROR'
+  // No fallback to the first fund: showing one fund's name over another's
+  // numbers is worse than saying the id is not one we run.
+  const currentFund = fundTypes?.find(f => f.id === selectedFund) ?? null
+  const isMirrorFund = currentFund?.type === 'MIRROR'
 
   useEffect(() => {
     async function fetchFundData() {
       try {
-        setIsLoading(true)
         setError(null)
 
         const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -233,6 +257,10 @@ function FundPageContent() {
       }
     }
 
+    // First paint shows the skeleton; the 30s refresh does not. Flipping back
+    // to the loading state on every poll blanked the whole page twice a minute
+    // and read as an automatic reload.
+    setIsLoading(true)
     fetchFundData()
     const interval = setInterval(fetchFundData, 30000)
     return () => clearInterval(interval)
@@ -241,6 +269,40 @@ function FundPageContent() {
   const totalReturn = overview ? overview.nav - overview.capital : 0
   const returnPct = overview && overview.capital > 0 ? (totalReturn / overview.capital) * 100 : 0
   const isPositive = totalReturn >= 0
+
+  if (fundTypes === null) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <Loader2 className="h-8 w-8 text-aware-400 animate-spin" />
+        <span className="ml-3 text-slate-400">Loading funds...</span>
+      </div>
+    )
+  }
+
+  if (!currentFund) {
+    return (
+      <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
+        <h1 className="text-xl font-bold text-white">Unknown fund</h1>
+        <p className="text-slate-400 mt-1">
+          <span className="font-mono">{selectedFund}</span> is not one of the
+          funds currently running.
+        </p>
+        {fundTypes.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-4">
+            {fundTypes.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setSelectedFund(f.id)}
+                className="px-3 py-1.5 text-sm rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700"
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

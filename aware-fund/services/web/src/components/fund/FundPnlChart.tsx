@@ -154,18 +154,6 @@ export function FundPnlChart({
             ))}
           </div>
 
-          {/* This is the change across the visible window, not the fund's
-              total P&L — the header above already shows that. Reading it as a
-              total is the obvious mistake, so the label says which it is. */}
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-500">Change over window</span>
-            <div className={cn(
-              'px-3 py-1.5 rounded-lg text-sm font-medium tabular-nums',
-              isPositive ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
-            )}>
-              {isPositive ? '+' : '\u2212'}{formatCurrency(Math.abs(changeUsd))}
-            </div>
-          </div>
         </div>
       )}
 
