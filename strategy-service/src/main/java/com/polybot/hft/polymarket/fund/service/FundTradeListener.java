@@ -96,7 +96,13 @@ public class FundTradeListener {
      * Runs every second to catch trades quickly.
      */
     @Scheduled(fixedRate = 1000)
-    public void pollForTrades() {
+    // Synchronized because the multi-fund scheduler can overlap invocations:
+    // pollPsiMirrorFunds runs at a fixed 1s rate over every fund, and when a
+    // round takes longer than that the next one starts on another thread. Two
+    // threads then read the same lastPollTime, query the same window and queue
+    // the same trade twice, which was visible in the logs as one signal emitted
+    // by two scheduling threads a millisecond apart.
+    public synchronized void pollForTrades() {
         if (!config.enabled()) {
             return;
         }
@@ -133,7 +139,15 @@ public class FundTradeListener {
                 .map(IndexConstituent::proxyAddress)
                 .toList();
 
-        // Initialize polling window
+        // Initialize polling window.
+        //
+        // The window is over ingested_at, not ts. Trades reach ClickHouse
+        // several minutes after they happen — the observed lag is a steady
+        // ~4.5 minutes — so a window over ts that advances to now() each second
+        // can never contain them: by the time a trade lands, the mark has long
+        // passed its ts. The only trades ever seen were the ones already in the
+        // table when the startup lookback ran, which is why the funds fired a
+        // burst on boot and then went quiet for hours.
         Instant now = clock.instant();
         if (lastPollTime == null) {
             // Start from 1 hour ago on first poll to catch recent trader activity
@@ -147,8 +161,8 @@ public class FundTradeListener {
         tradesPolledCounter.increment(trades.size());
 
         if (!trades.isEmpty()) {
-            log.info("Found {} new trades from PSI-10 traders (window: {} to {})",
-                    trades.size(), lastPollTime, now);
+            log.info("Found {} new trades from {} traders (ingest window: {} to {})",
+                    trades.size(), config.indexType(), lastPollTime, now);
         }
 
         // Update highwater mark
@@ -200,7 +214,7 @@ public class FundTradeListener {
 
         // Format timestamps for ClickHouse DateTime64
         java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter
-                .ofPattern("yyyy-MM-dd HH:mm:ss")
+                .ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
                 .withZone(java.time.ZoneOffset.UTC);
         String fromStr = fmt.format(from);
         String toStr = fmt.format(to);
@@ -220,8 +234,8 @@ public class FundTradeListener {
                 notional
             FROM polybot.aware_global_trades_dedup
             WHERE proxy_address IN (%s)
-              AND ts > toDateTime('%s')
-              AND ts <= toDateTime('%s')
+              AND ingested_at > toDateTime64('%s', 3)
+              AND ingested_at <= toDateTime64('%s', 3)
             ORDER BY ts
             LIMIT 500
             """.formatted(addressList, fromStr, toStr);
