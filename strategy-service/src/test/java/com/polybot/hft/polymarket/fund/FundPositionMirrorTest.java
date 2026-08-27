@@ -224,7 +224,8 @@ class FundPositionMirrorTest {
                         0.10,
                         50,
                         BigDecimal.valueOf(1000),
-                        true  // killSwitchActive
+                        true,  // killSwitchActive
+                        0.90   // maxExposurePct
                 )
         );
         FundPositionMirror killSwitchMirror = new FundPositionMirror(
