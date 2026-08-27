@@ -319,15 +319,16 @@ public class InsiderFollowStrategy extends ActiveFundExecutor {
      * Determine trade action from direction hint or alert type.
      */
     private AlphaSignal.SignalAction determineAction(String direction, String alertType) {
-        if (direction != null) {
-            return switch (direction.toUpperCase()) {
-                case "BUY", "LONG", "YES" -> AlphaSignal.SignalAction.BUY;
-                case "SELL", "SHORT", "NO" -> AlphaSignal.SignalAction.SELL;
-                default -> null;
-            };
-        }
-
-        // Default based on alert type (insider entry = BUY)
+        // The action comes from the alert type, not from the direction.
+        //
+        // direction names the OUTCOME the detected traders took — "Yes", "No",
+        // "Up", or a team name in a sports market — and that outcome is already
+        // resolved into token_id. Reading it as a side was wrong in both
+        // directions: "NO" mapped to SELL, when following someone entering the
+        // No outcome means BUYING the No token, and anything that was not one
+        // of six hardcoded words returned null, so every alert on a market
+        // whose outcomes are team names was discarded as "could not determine
+        // action".
         return switch (alertType.toUpperCase()) {
             case "INSIDER_DETECTED", "SMART_MONEY_ENTRY" -> AlphaSignal.SignalAction.BUY;
             case "INSIDER_EXIT", "SMART_MONEY_EXIT" -> AlphaSignal.SignalAction.SELL;

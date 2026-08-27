@@ -1027,6 +1027,9 @@ class InsiderDetector:
             token_id = token_ids.get((alert.market_slug, (alert.direction or '').upper()))
             if token_id:
                 fields['token_id'] = token_id
+                # The label of the token, so the signal records the outcome the
+                # traders actually took instead of defaulting to "Yes".
+                fields['outcome'] = alert.direction
             metadata = json.dumps(fields)
 
             data.append([
