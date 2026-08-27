@@ -10,6 +10,7 @@ import com.polybot.hft.polymarket.fund.service.IndexWeightProvider;
 import com.polybot.hft.strategy.executor.ExecutorApiClient;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -45,9 +46,25 @@ public class FundConfiguration {
         return config;
     }
 
+    /**
+     * The registry itself is shared, so this bean exists either way. The
+     * single-fund registration below does not: when multi-fund mode is on it
+     * owns the roster, and registering hft.fund.index-type here as well threw
+     * "Fund already registered" and left the registry holding this block's
+     * capital for a fund the multi-fund allocation had sized differently.
+     */
     @Bean
-    public FundRegistry fundRegistry(FundConfig config) {
+    public FundRegistry fundRegistry(
+            FundConfig config,
+            @Value("${hft.multi-fund.enabled:false}") boolean multiFundEnabled
+    ) {
         FundRegistry registry = new FundRegistry();
+
+        if (multiFundEnabled) {
+            log.info("Multi-fund mode is on; skipping single-fund registration of {}",
+                    config.indexType());
+            return registry;
+        }
 
         // Register the configured fund on startup
         if (config.enabled()) {
@@ -113,6 +130,8 @@ public class FundConfiguration {
      * are not processed on beans created via new() in @Bean methods.
      */
     @Bean
+    @ConditionalOnProperty(prefix = "hft.multi-fund", name = "enabled",
+            havingValue = "false", matchIfMissing = true)
     public FundTradePoller fundTradePoller(FundTradeListener tradeListener) {
         return new FundTradePoller(tradeListener);
     }
@@ -142,6 +161,8 @@ public class FundConfiguration {
      * Runs every 100ms to check for signals that have passed their delay period.
      */
     @Bean
+    @ConditionalOnProperty(prefix = "hft.multi-fund", name = "enabled",
+            havingValue = "false", matchIfMissing = true)
     public FundSignalProcessor fundSignalProcessor(FundPositionMirror positionMirror) {
         return new FundSignalProcessor(positionMirror);
     }
