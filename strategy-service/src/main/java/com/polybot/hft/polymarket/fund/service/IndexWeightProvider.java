@@ -99,18 +99,27 @@ public class IndexWeightProvider {
             log.warn("Index name '{}' contained invalid characters, sanitized to '{}'", indexName, safeIndexName);
         }
 
+        // estimated_capital drives capital-proportional sizing in
+        // IndexConstituent.calculateFundShares. It reads aware_trader_capital,
+        // not aware_trader_profiles.total_volume_usd as it used to: volume is
+        // lifetime turnover, and these traders churn small positions, so it
+        // overstated their working capital by 6x to 11x. Every copied trade
+        // came out that many times too small and most were then dropped for
+        // falling under min-trade-usd. A trader with no estimate yields 0 here,
+        // which falls back to weight-only sizing — small, not oversized.
         String sql = """
             SELECT
                 i.username,
                 i.proxy_address,
                 i.weight,
                 row_number() OVER (ORDER BY i.weight DESC) AS rank_in_index,
-                COALESCE(p.total_volume_usd, 0) AS estimated_capital,
+                COALESCE(k.estimated_capital_usd, 0) AS estimated_capital,
                 i.total_score AS smart_money_score,
                 COALESCE(i.strategy_type, 'UNKNOWN') AS strategy_type,
                 p.last_trade_at
             FROM (SELECT * FROM polybot.aware_psi_index FINAL WHERE index_type = '%s') AS i
             LEFT JOIN (SELECT * FROM polybot.aware_trader_profiles FINAL) AS p ON i.proxy_address = p.proxy_address
+            LEFT JOIN (SELECT * FROM polybot.aware_trader_capital FINAL) AS k ON i.proxy_address = k.proxy_address
             ORDER BY i.weight DESC
             """.formatted(safeIndexName);
 

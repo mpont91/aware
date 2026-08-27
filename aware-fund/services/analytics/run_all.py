@@ -397,6 +397,21 @@ def run_edge_persistence(ch_client) -> dict:
         return {'status': 'error', 'error': str(e)}
 
 
+def run_trader_capital(ch_client) -> dict:
+    """Estimate each trader's working capital, for mirror position sizing"""
+    logger.info("Estimating trader working capital...")
+
+    try:
+        from trader_capital import refresh
+
+        result = refresh(ch_client)
+        return result
+
+    except Exception as e:
+        logger.error(f"Trader capital estimation failed: {e}")
+        return {'status': 'error', 'error': str(e)}
+
+
 def run_market_classification(ch_client) -> dict:
     """Run market category classification"""
     logger.info("Running market classification...")
@@ -802,6 +817,7 @@ def run_all_jobs(ch_client) -> dict:
     # 0. Market Classification (must run before PSI index building)
     # Classifies market slugs into categories (CRYPTO, POLITICS, SPORTS, etc.)
     # Required for PSI-POLITICS, PSI-SPORTS, PSI-CRYPTO sectorial indexes
+    results['trader_capital'] = run_trader_capital(ch_client)
     results['market_classification'] = run_market_classification(ch_client)
 
     # 1. Resolution Tracking (must run before P&L)
