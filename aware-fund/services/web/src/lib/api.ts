@@ -334,7 +334,11 @@ export interface FundSummaryEntry {
   has_data: boolean
   apportioned: boolean
   positions: number
+  /** Cumulative cost of every position taken. The ROI is measured against
+   *  this, so it can exceed the allocation as capital is recycled. */
   invested: number
+  /** What the fund has in the market right now. */
+  open_cost_usd: number
   realized_pnl: number
   unrealized_pnl: number
   total_pnl: number
@@ -344,6 +348,7 @@ export interface FundSummaryEntry {
 export interface FundsSummary {
   total_capital: number
   total_invested: number
+  total_open_cost: number
   total_pnl: number
   funds: FundSummaryEntry[]
 }

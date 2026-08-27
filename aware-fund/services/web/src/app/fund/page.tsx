@@ -434,7 +434,7 @@ function FundPageContent() {
                   {overview.has_data ? (
                     <>
                       <p className="text-slate-500 text-sm mt-1">
-                        Invested: {formatCurrency(overview.capital)}
+                        Traded in total: {formatCurrency(overview.capital)}
                         {' \u00b7 '}
                         {overview.total_positions} position{overview.total_positions === 1 ? '' : 's'}
                       </p>

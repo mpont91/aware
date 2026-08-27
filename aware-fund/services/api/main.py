@@ -2901,6 +2901,64 @@ FUND_CAPITAL_PCT = {
 FUND_DISPLAY_ORDER = tuple(FUND_CAPITAL_PCT)
 
 
+def _open_cost_by_fund(client) -> dict:
+    """
+    What each fund currently has at risk, per fund id.
+
+    Distinct from the cost_usd on aware_fund_pnl, which accumulates over every
+    position the fund has ever taken and so keeps growing as markets settle.
+    That figure is the base the ROI is measured against; this one is the money
+    presently in the market, which is what belongs next to the allocation.
+    """
+    open_cost: dict = {}
+
+    # ALPHA-ARB trades directly, so its open cost is the GABAGOOL side outright.
+    gab = client.query("""
+        SELECT sum(cost_usd)
+        FROM polybot.aware_strategy_pnl_positions
+        WHERE strategy = 'GABAGOOL' AND is_resolved = 0
+          AND calculated_at = (
+              SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
+              WHERE strategy = 'GABAGOOL'
+          )
+    """).result_rows
+    if gab and gab[0][0]:
+        open_cost['ALPHA-ARB'] = float(gab[0][0])
+
+    # Mirror funds share tokens, so each open position is apportioned by
+    # requested shares — the same split the P&L uses, so the two agree.
+    rows = client.query("""
+        SELECT token_id, cost_usd
+        FROM polybot.aware_strategy_pnl_positions
+        WHERE strategy = 'MIRROR' AND is_resolved = 0
+          AND calculated_at = (
+              SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
+              WHERE strategy = 'MIRROR'
+          )
+    """).result_rows
+    if not rows:
+        return open_cost
+
+    weights: dict = {}
+    for token_id, fid, requested in client.query("""
+        SELECT token_id, fund_id, sum(toFloat64(fund_shares))
+        FROM polybot.aware_fund_executions
+        WHERE token_id IN %(tokens)s
+        GROUP BY token_id, fund_id
+    """, parameters={'tokens': tuple({r[0] for r in rows})}).result_rows:
+        weights.setdefault(token_id, {})[fid.upper()] = float(requested)
+
+    for token_id, cost_usd in rows:
+        token_weights = weights.get(token_id, {})
+        total = sum(token_weights.values())
+        if not total:
+            continue
+        for fid, requested in token_weights.items():
+            open_cost[fid] = open_cost.get(fid, 0.0) + float(cost_usd) * requested / total
+
+    return open_cost
+
+
 def _fund_sort_key(fund_id: str) -> int:
     """Position in FUND_DISPLAY_ORDER; anything unlisted sorts to the end."""
     upper = fund_id.upper()
@@ -2961,7 +3019,11 @@ async def get_fund_pnl(fund_id: str = Query(...)):
                     'apportioned': False,
                     'allocated_capital': _allocated_capital(fund),
                     'positions': int(r[0]),
+                    # Cumulative across every position ever taken; the ROI
+                    # below is measured against it.
                     'cost_usd': float(r[1]),
+                    # What is in the market right now.
+                    'open_cost_usd': round(_open_cost_by_fund(client).get(fund, 0.0), 2),
                     'realized_pnl': float(r[2]),
                     'unrealized_pnl': float(r[3]),
                     'total_pnl': float(r[4]),
@@ -3002,7 +3064,11 @@ async def get_fund_pnl(fund_id: str = Query(...)):
             'apportioned': True,
             'allocated_capital': _allocated_capital(fund),
             'positions': int(r[0]),
+            # Cumulative across every position ever taken; the ROI below is
+            # measured against it.
             'cost_usd': float(r[1]),
+            # What is in the market right now.
+            'open_cost_usd': round(_open_cost_by_fund(client).get(fund, 0.0), 2),
             'realized_pnl': float(r[2]),
             'unrealized_pnl': float(r[3]),
             'total_pnl': float(r[4]),
@@ -3049,6 +3115,8 @@ async def get_funds_summary():
             LIMIT 1
         """).result_rows
 
+        open_cost = _open_cost_by_fund(client)
+
         funds = []
         for fund_id, pct in FUND_CAPITAL_PCT.items():
             row = by_fund.get(fund_id)
@@ -3058,6 +3126,7 @@ async def get_funds_summary():
                 exact = True
 
             allocated = _allocated_capital(fund_id)
+            open_now = round(open_cost.get(fund_id, 0.0), 2)
             if row:
                 funds.append({
                     'fund_id': fund_id,
@@ -3067,7 +3136,12 @@ async def get_funds_summary():
                     'has_data': True,
                     'apportioned': not exact,
                     'positions': int(row[1]),
+                    # Cumulative cost of every position taken. The ROI is
+                    # measured against this, which is why it can exceed the
+                    # allocation: capital is recycled as markets settle.
                     'invested': float(row[2]),
+                    # Currently at risk — the figure that pairs with allocated.
+                    'open_cost_usd': open_now,
                     'realized_pnl': float(row[3]),
                     'unrealized_pnl': float(row[4]),
                     'total_pnl': float(row[5]),
@@ -3081,13 +3155,15 @@ async def get_funds_summary():
                     'allocated_capital': allocated,
                     'has_data': False,
                     'apportioned': True,
-                    'positions': 0, 'invested': 0.0, 'realized_pnl': 0.0,
+                    'positions': 0, 'invested': 0.0, 'open_cost_usd': 0.0,
+                    'realized_pnl': 0.0,
                     'unrealized_pnl': 0.0, 'total_pnl': 0.0, 'roi_pct': 0.0,
                 })
 
         return {
             'total_capital': float(os.getenv('TOTAL_CAPITAL_USD', '100000')),
             'total_invested': sum(f['invested'] for f in funds),
+            'total_open_cost': sum(f['open_cost_usd'] for f in funds),
             'total_pnl': sum(f['total_pnl'] for f in funds),
             'funds': sorted(funds, key=lambda f: _fund_sort_key(f['fund_id'])),
         }

@@ -227,7 +227,11 @@ class InsiderDetector:
                 proxy_address,
                 username,
                 market_slug,
-                side,
+                -- The outcome, not the side. InsiderAlert.direction is
+                -- documented as "YES" or "NO" and consumed downstream as the
+                -- outcome to trade; this detector was putting BUY or SELL in
+                -- it, which named no tradeable token.
+                outcome,
                 sum(notional) as total_bet,
                 count() as trade_count,
                 min(ts) as first_trade,
@@ -236,7 +240,7 @@ class InsiderDetector:
             WHERE ts >= now() - INTERVAL {hours} HOUR
               AND proxy_address != ''
               {market_exclusion}
-            GROUP BY proxy_address, username, market_slug, side
+            GROUP BY proxy_address, username, market_slug, outcome
         ),
         trader_stats AS (
             SELECT
@@ -245,7 +249,7 @@ class InsiderDetector:
                 sum(total_bet) as total_volume,
                 count(DISTINCT market_slug) as unique_markets,
                 argMax(market_slug, total_bet) as main_market,
-                argMax(side, total_bet) as main_direction,
+                argMax(outcome, total_bet) as main_direction,
                 max(total_bet) as max_market_bet
             FROM recent_trades
             GROUP BY proxy_address, username
@@ -899,6 +903,47 @@ class InsiderDetector:
 
         return alerts
 
+    def _resolve_token_ids(self, alerts: list) -> dict:
+        """
+        Map each (market_slug, outcome) an alert names to its token id.
+
+        Outcome labels are not always "Yes"/"No" — a sports market names the
+        teams — so the match is on the label the trades actually carry,
+        uppercased. A market whose outcome the alert does not name resolves to
+        nothing and the alert goes out without a token, which the strategy
+        skips rather than guessing.
+        """
+        pairs = {(a.market_slug, (a.direction or '').upper())
+                 for a in alerts if a.market_slug and a.direction}
+        if not pairs:
+            return {}
+
+        slugs = sorted({slug for slug, _ in pairs})
+        try:
+            rows = self.ch.query(
+                """
+                SELECT market_slug, upper(outcome) AS outcome,
+                       argMax(token_id, ts) AS token_id
+                FROM polybot.aware_global_trades_dedup
+                WHERE market_slug IN %(slugs)s
+                GROUP BY market_slug, outcome
+                """,
+                parameters={'slugs': tuple(slugs)},
+            ).result_rows
+        except Exception as e:
+            logger.error(f"Failed to resolve token ids for alerts: {e}")
+            return {}
+
+        resolved = {(r[0], r[1]): r[2] for r in rows}
+        matched = sum(1 for p in pairs if p in resolved)
+        if matched < len(pairs):
+            logger.info(
+                "Resolved token ids for %d of %d alert markets; the rest name "
+                "an outcome that has no trades on record",
+                matched, len(pairs),
+            )
+        return resolved
+
     def save_alerts(self, alerts: list[InsiderAlert]) -> int:
         """
         Save alerts to ClickHouse for Java strategy-service to consume.
@@ -925,6 +970,13 @@ class InsiderDetector:
             'WHALE_ANOMALY': 'UNUSUAL_ACTIVITY',
         }
 
+        # Resolve the token each alert points at. ALPHA-INSIDER cannot act on
+        # an alert without one — it knows the market and the direction but not
+        # which outcome token to buy — and was dropping every single alert with
+        # "missing token_id in metadata". One batch query rather than one per
+        # alert: outcomes are shared across alerts on the same market.
+        token_ids = self._resolve_token_ids(alerts)
+
         # Prepare data for insert into aware_alerts
         data = []
         for alert in alerts:
@@ -933,14 +985,18 @@ class InsiderDetector:
             )
 
             # Build metadata JSON with details for strategy
-            metadata = json.dumps({
+            fields = {
                 'signal_type': alert.signal_type.value,
                 'direction': alert.direction,
                 'confidence': alert.confidence,
                 'total_volume_usd': alert.total_volume_usd,
                 'num_traders': alert.num_traders,
                 'traders_involved': alert.traders_involved,
-            })
+            }
+            token_id = token_ids.get((alert.market_slug, (alert.direction or '').upper()))
+            if token_id:
+                fields['token_id'] = token_id
+            metadata = json.dumps(fields)
 
             data.append([
                 str(uuid.uuid4()),          # id

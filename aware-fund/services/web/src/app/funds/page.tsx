@@ -68,6 +68,7 @@ interface FundCard {
   description: string
   allocated_capital: number
   invested: number
+  open_cost_usd: number
   total_pnl: number
   roi_pct: number
   positions: number
@@ -95,6 +96,7 @@ export default function AllFundsPage() {
           description: f.description,
           allocated_capital: f.allocated_capital,
           invested: f.invested,
+          open_cost_usd: f.open_cost_usd,
           total_pnl: f.total_pnl,
           roi_pct: f.roi_pct,
           positions: f.positions,
@@ -313,9 +315,20 @@ export default function AllFundsPage() {
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Deployed</p>
+                    {/* "Deployed" read as money currently in the market, which
+                        it is not — it accumulates over every position ever
+                        taken, so it climbs past the allocation as capital is
+                        recycled. Both figures are shown, each named for what
+                        it is. */}
+                    <p className="text-xs text-slate-500">In market now</p>
                     <p className="text-lg font-semibold text-white tabular-nums">
-                      {fund.has_data ? formatCurrency(fund.invested) : '\u2014'}
+                      {fund.has_data ? formatCurrency(fund.open_cost_usd) : '\u2014'}
+                    </p>
+                    <p
+                      className="text-xs text-slate-500 mt-0.5 tabular-nums"
+                      title="Cumulative cost of every position this fund has taken, settled ones included. The return is measured against it."
+                    >
+                      {fund.has_data ? `${formatCurrency(fund.invested)} traded in total` : ''}
                     </p>
                   </div>
                   <div>
