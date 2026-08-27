@@ -123,6 +123,14 @@ public record ExecutorSimulationProperties(
      */
     @NotNull @Min(0) Long tradeTapeBidDeltaMaxTradeLagMillis,
     /**
+     * Cash the paper account starts with, in USD.
+     *
+     * In simulation the bankroll endpoint answered zero for everything, so the
+     * live balance path could not be exercised until the day real money was
+     * behind it. The paper book is valued against this instead.
+     */
+    java.math.BigDecimal startingBankrollUsd,
+    /**
      * CLICKHOUSE_MARKET_TRADES only: ClickHouse HTTP URL (e.g., http://127.0.0.1:8123).
      */
     String tradeTapeClickhouseUrl,
@@ -216,6 +224,9 @@ public record ExecutorSimulationProperties(
     }
     if (tradeTapeBidDeltaMaxTradeLagMillis == null) {
       tradeTapeBidDeltaMaxTradeLagMillis = 300L;
+    }
+    if (startingBankrollUsd == null || startingBankrollUsd.signum() <= 0) {
+      startingBankrollUsd = java.math.BigDecimal.valueOf(100_000);
     }
     if (tradeTapeClickhouseUrl == null || tradeTapeClickhouseUrl.isBlank()) {
       tradeTapeClickhouseUrl = "http://127.0.0.1:8123";

@@ -51,6 +51,9 @@ executor:
     trade-tape-bid-delta-cancel-scale: 0.25
     trade-tape-bid-delta-max-trade-lag-millis: 2000
     # Service name, not 127.0.0.1: ClickHouse is a separate container here.
+    # Cash the paper account starts with. Matches the funds' total capital so
+    # the two agree on how much money is notionally in play.
+    starting-bankroll-usd: ${TOTAL_CAPITAL_USD:100000}
     trade-tape-clickhouse-url: ${EXECUTOR_CLICKHOUSE_URL:http://clickhouse:8123}
     trade-tape-clickhouse-database: ${CLICKHOUSE_DATABASE:polybot}
     trade-tape-clickhouse-user: ${CLICKHOUSE_USER:default}

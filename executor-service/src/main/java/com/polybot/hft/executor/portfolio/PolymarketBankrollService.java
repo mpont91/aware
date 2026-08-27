@@ -33,18 +33,26 @@ public class PolymarketBankrollService {
   private final @NonNull OnchainErc20BalanceService onchainErc20;
   private final @NonNull PaperExchangeSimulator simulator;
   private final @NonNull Clock clock;
+  private final @NonNull PaperBankrollCalculator paperBankroll;
 
   public PolymarketBankrollResponse snapshot() {
     long now = clock.millis();
     if (simulator.enabled()) {
+      // Paper is valued the same way live is, rather than reported as zero.
+      // Zeros meant nothing downstream could be exercised until real money was
+      // behind it: dynamic sizing had no bankroll to scale against and the
+      // circuit breaker had a balance permanently under its floor.
+      PaperBankrollCalculator.PaperBook book = paperBankroll.read();
       return new PolymarketBankrollResponse(
           properties.mode().name(),
           null,
+          book.cashUsd(),
+          book.openValueUsd(),
           BigDecimal.ZERO,
-          BigDecimal.ZERO,
-          BigDecimal.ZERO,
-          BigDecimal.ZERO,
-          0,
+          book.equityUsd(),
+          book.openPositions(),
+          // Nothing to redeem or merge on paper: settlement is accounted for
+          // when the market resolves, not claimed on chain.
           0,
           0,
           now
