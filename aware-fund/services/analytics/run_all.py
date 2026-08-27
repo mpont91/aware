@@ -891,17 +891,37 @@ def main():
                        help='Run continuously every hour')
     parser.add_argument('--interval', type=int, default=3600,
                        help='Interval in seconds for continuous mode (default: 3600)')
+    parser.add_argument('--pnl-interval', type=int,
+                       default=int(os.getenv('PNL_INTERVAL_SECONDS', '300')),
+                       help='Seconds between P&L refreshes inside a cycle (default: 300)')
     args = parser.parse_args()
 
     ch_client = get_clickhouse_client()
 
     if args.continuous:
-        logger.info(f"Starting continuous mode with {args.interval}s interval")
+        logger.info(
+            f"Starting continuous mode with {args.interval}s interval "
+            f"(P&L refreshed every {args.pnl_interval}s in between)"
+        )
         while True:
             try:
                 results = run_all_jobs(ch_client)
                 logger.info(f"Next run in {args.interval}s")
-                time.sleep(args.interval)
+
+                # The full cycle is dominated by jobs that only need to run
+                # hourly — resolution tracking works through thousands of
+                # markets, scoring rebuilds every trader. The P&L is not one of
+                # them, and two things read it far more often than once an
+                # hour: the dashboard, and the paper bankroll, which the sizing
+                # and the circuit breaker consult before every order. Left on
+                # the hourly cadence those decisions run on an hour-old balance.
+                waited = 0
+                while waited < args.interval:
+                    nap = min(args.pnl_interval, args.interval - waited)
+                    time.sleep(nap)
+                    waited += nap
+                    if waited < args.interval:
+                        run_strategy_pnl_job(ch_client)
             except KeyboardInterrupt:
                 logger.info("Shutting down...")
                 break
