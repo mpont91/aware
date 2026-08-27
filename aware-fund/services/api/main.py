@@ -808,6 +808,194 @@ async def get_trader(identifier: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# How stale a mark may be before a position is shown unpriced. Polymarket
+# markets trade continuously, so a token with no print in this window has no
+# price anyone is currently willing to pay; inventing one inflates the P&L.
+TRADER_MARK_MAX_AGE_HOURS = 6
+
+
+@app.get("/api/traders/{address}/activity")
+async def get_trader_activity(
+    address: str,
+    days: int = Query(default=180, ge=7, le=730),
+    trade_limit: int = Query(default=25, ge=1, le=200),
+):
+    """
+    Everything the trader detail page plots: the realized P&L curve, the
+    category split, the positions still open, and the latest trades.
+
+    All four come from observed Polymarket activity for this wallet. Open
+    positions are marked to the last print on the token, and left unpriced
+    when that print is older than TRADER_MARK_MAX_AGE_HOURS.
+    """
+    try:
+        client = get_clickhouse_client()
+        params = {'addr': address.lower(), 'days': days, 'lim': trade_limit}
+
+        # ── Realized P&L curve ──────────────────────────────────────────────
+        # One point per day a market this trader held actually resolved.
+        # Unresolved positions are deliberately absent: they are estimates,
+        # and the curve is the settled record.
+        curve_rows = client.query("""
+            SELECT toDate(resolved_at) AS d, sum(realized_pnl) AS daily
+            FROM (SELECT * FROM aware_position_pnl FINAL)
+            WHERE lower(proxy_address) = %(addr)s
+              AND resolved_at > toDateTime64('1971-01-01 00:00:00', 3)
+              AND resolved_at >= now() - INTERVAL %(days)s DAY
+            GROUP BY d
+            ORDER BY d
+        """, parameters=params).result_rows
+
+        pnl_curve = []
+        running = 0.0
+        for d, daily in curve_rows:
+            running += float(daily or 0)
+            pnl_curve.append({
+                'date': d.isoformat(),
+                'realized_pnl': round(float(daily or 0), 2),
+                'cumulative_pnl': round(running, 2),
+            })
+
+        # ── Category split ──────────────────────────────────────────────────
+        # Volume and trade count come from every trade; the win rate can only
+        # come from positions that resolved, so the two are queried apart and
+        # merged. A category with no resolved position yet has win_rate None
+        # rather than a zero that would read as "never wins".
+        cat_rows = client.query("""
+            SELECT
+                if(c.market_category = '', 'UNCLASSIFIED', c.market_category) AS category,
+                sum(t.notional) AS volume,
+                count() AS trade_count
+            FROM aware_global_trades_dedup t
+            LEFT JOIN (SELECT * FROM aware_market_classifications FINAL) c
+                ON t.market_slug = c.market_slug
+            WHERE lower(t.proxy_address) = %(addr)s
+            GROUP BY category
+            ORDER BY volume DESC
+        """, parameters=params).result_rows
+
+        win_rows = client.query("""
+            SELECT
+                if(c.market_category = '', 'UNCLASSIFIED', c.market_category) AS category,
+                countIf(p.realized_pnl > 0) AS wins,
+                count() AS settled
+            FROM (SELECT * FROM aware_position_pnl FINAL) p
+            LEFT JOIN (SELECT * FROM aware_market_classifications FINAL) c
+                ON p.market_slug = c.market_slug
+            WHERE lower(p.proxy_address) = %(addr)s
+              AND p.resolved_at > toDateTime64('1971-01-01 00:00:00', 3)
+            GROUP BY category
+        """, parameters=params).result_rows
+        win_by_cat = {r[0]: (int(r[1]), int(r[2])) for r in win_rows}
+
+        total_volume = sum(float(r[1] or 0) for r in cat_rows) or 1.0
+        categories = []
+        for category, volume, trade_count in cat_rows:
+            wins, settled = win_by_cat.get(category, (0, 0))
+            categories.append({
+                'category': category,
+                'volume': round(float(volume or 0), 2),
+                'trade_count': int(trade_count),
+                'share_pct': round(100 * float(volume or 0) / total_volume, 1),
+                'win_rate': round(100 * wins / settled, 1) if settled else None,
+                'settled_positions': settled,
+            })
+
+        # ── Open positions ──────────────────────────────────────────────────
+        # Net long exposure on markets with no resolution recorded. Netting
+        # buys against sells is what makes this "open" rather than "traded":
+        # a round trip cancels out and correctly disappears.
+        pos_rows = client.query("""
+            SELECT
+                t.condition_id AS condition_id,
+                t.token_id AS token_id,
+                t.market_slug AS market_slug,
+                any(t.title) AS title,
+                t.outcome AS outcome,
+                sumIf(t.size, t.side = 'BUY') - sumIf(t.size, t.side = 'SELL') AS net_shares,
+                sumIf(t.notional, t.side = 'BUY') - sumIf(t.notional, t.side = 'SELL') AS net_cost
+            FROM aware_global_trades_dedup t
+            WHERE lower(t.proxy_address) = %(addr)s
+              AND t.condition_id NOT IN (
+                  SELECT condition_id
+                  FROM (SELECT * FROM aware_market_resolutions FINAL)
+                  WHERE is_resolved = 1
+              )
+            GROUP BY condition_id, token_id, market_slug, outcome
+            HAVING net_shares > 0.01
+            ORDER BY net_cost DESC
+            LIMIT 100
+        """, parameters=params).result_rows
+
+        marks = {}
+        if pos_rows:
+            mark_rows = client.query("""
+                SELECT token_id, argMax(price, ts) AS last_price, max(ts) AS last_ts
+                FROM aware_global_trades
+                WHERE token_id IN %(tokens)s
+                  AND ts >= now() - INTERVAL %(hours)s HOUR
+                GROUP BY token_id
+            """, parameters={
+                'tokens': tuple({r[1] for r in pos_rows}),
+                'hours': TRADER_MARK_MAX_AGE_HOURS,
+            }).result_rows
+            marks = {r[0]: (float(r[1]), r[2]) for r in mark_rows}
+
+        open_positions = []
+        for condition_id, token_id, market_slug, title, outcome, net_shares, net_cost in pos_rows:
+            shares = float(net_shares)
+            cost = float(net_cost)
+            mark = marks.get(token_id)
+            entry = cost / shares if shares else 0.0
+            open_positions.append({
+                'condition_id': condition_id,
+                'market_slug': market_slug,
+                'title': title or market_slug,
+                'outcome': outcome,
+                'shares': round(shares, 2),
+                'cost': round(cost, 2),
+                'avg_entry_price': round(entry, 4),
+                'current_price': round(mark[0], 4) if mark else None,
+                'unrealized_pnl': round(mark[0] * shares - cost, 2) if mark else None,
+                'priced_at': mark[1].isoformat() if mark else None,
+            })
+
+        # ── Recent trades ───────────────────────────────────────────────────
+        trade_rows = client.query("""
+            SELECT ts, market_slug, title, outcome, side, price, size, notional
+            FROM aware_global_trades_dedup
+            WHERE lower(proxy_address) = %(addr)s
+            ORDER BY ts DESC
+            LIMIT %(lim)s
+        """, parameters=params).result_rows
+
+        recent_trades = [{
+            'ts': r[0].isoformat(),
+            'market_slug': r[1],
+            'title': r[2] or r[1],
+            'outcome': r[3],
+            'side': r[4],
+            'price': round(float(r[5]), 4),
+            'size': round(float(r[6]), 2),
+            'notional': round(float(r[7]), 2),
+        } for r in trade_rows]
+
+        return {
+            'proxy_address': address,
+            'mark_max_age_hours': TRADER_MARK_MAX_AGE_HOURS,
+            'pnl_curve': pnl_curve,
+            'categories': categories,
+            'open_positions': open_positions,
+            'recent_trades': recent_trades,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get trader activity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/index/psi-10", response_model=PSIIndex)
 async def get_psi_10():
     """
@@ -1183,27 +1371,31 @@ async def get_consensus_markets(
     try:
         client = get_clickhouse_client()
 
+        # Keyed on proxy_address, not username: most Polymarket wallets have no
+        # username set, so joining on it silently matched nothing but the empty
+        # string and the endpoint returned no signals at all.
         query = f"""
         WITH smart_traders AS (
-            SELECT username
+            SELECT proxy_address, total_score
             FROM polybot.aware_smart_money_scores FINAL
             WHERE total_score >= 45
+              AND proxy_address != ''
             LIMIT 100
         )
         SELECT
-            market_slug,
-            any(title) as title,
-            outcome,
-            count(DISTINCT username) as trader_count,
-            sum(notional) as total_volume,
-            avg(price) as avg_price
-        FROM polybot.aware_global_trades
-        WHERE
-            username IN (SELECT username FROM smart_traders)
-            AND ts >= now() - INTERVAL {hours} HOUR
-        GROUP BY market_slug, outcome
-        HAVING count(DISTINCT username) >= {min_traders}
-           AND sum(notional) >= {min_volume}
+            t.market_slug,
+            any(t.title) as title,
+            t.outcome,
+            count(DISTINCT t.proxy_address) as trader_count,
+            sum(t.notional) as total_volume,
+            avg(t.price) as avg_price,
+            avg(st.total_score) as avg_score
+        FROM polybot.aware_global_trades t
+        INNER JOIN smart_traders st ON t.proxy_address = st.proxy_address
+        WHERE t.ts >= now() - INTERVAL {hours} HOUR
+        GROUP BY t.market_slug, t.outcome
+        HAVING count(DISTINCT t.proxy_address) >= {min_traders}
+           AND sum(t.notional) >= {min_volume}
         ORDER BY total_volume DESC
         LIMIT 20
         """
@@ -1219,6 +1411,7 @@ async def get_consensus_markets(
                 'trader_count': row[3],
                 'total_volume': round(row[4], 2),
                 'avg_price': round(row[5], 3),
+                'avg_score': round(row[6], 1),
                 'consensus_strength': 'STRONG' if row[3] >= 5 else 'MODERATE' if row[3] >= 3 else 'WEAK'
             })
 

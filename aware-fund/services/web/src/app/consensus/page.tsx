@@ -75,7 +75,7 @@ export default function ConsensusPage() {
           outcome: s.favored_outcome,
           consensus_level: Math.round(s.avg_price * 100),
           traders_count: s.trader_count,
-          avg_score: 80, // Placeholder - could be added to API
+          avg_score: Math.round(s.avg_score),
           total_volume: s.total_volume,
           signal_strength: s.consensus_strength,
           direction: s.favored_outcome.toLowerCase() === 'yes' ? 'BULLISH' : 'BEARISH',

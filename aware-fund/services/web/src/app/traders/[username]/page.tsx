@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import {
   ArrowLeft,
-  Trophy,
   TrendingUp,
   TrendingDown,
   Target,
@@ -14,13 +13,13 @@ import {
   Activity,
   Star,
   Shield,
-  AlertTriangle,
   Loader2,
 } from 'lucide-react'
-import { cn, formatCurrency, formatNumber, formatPercent, getTimeAgo } from '@/lib/utils'
+import { cn, formatCurrency, formatNumber, getTimeAgo } from '@/lib/utils'
 import {
   AreaChart,
   Area,
+  CartesianGrid,
   XAxis,
   YAxis,
   Tooltip,
@@ -29,40 +28,28 @@ import {
   Pie,
   Cell,
 } from 'recharts'
-import { api, TraderProfile, traderName, traderInitial } from '@/lib/api'
+import {
+  api,
+  TraderProfile,
+  TraderActivity,
+  TraderCategory,
+  traderName,
+  traderInitial,
+} from '@/lib/api'
 
-// Performance data (placeholder - will be populated from API when available)
-const mockPerformance = [
-  { date: 'Aug', pnl: 180000 },
-  { date: 'Sep', pnl: 320000 },
-  { date: 'Oct', pnl: 580000 },
-  { date: 'Nov', pnl: 890000 },
-  { date: 'Dec', pnl: 1250000 },
-]
+/**
+ * Categorical hues for the category donut. Every slice touches every other one
+ * in a donut, so these were validated all-pairs against the dark surface rather
+ * than only as adjacent neighbours — which is why there is one blue and not two.
+ * Four is the ceiling that stays separable; anything beyond folds into "Other",
+ * drawn in neutral slate because it is a remainder, not a category.
+ */
+const CATEGORY_COLORS = ['#0284c7', '#d97706', '#8b5cf6', '#db2777']
+const OTHER_COLOR = '#475569'
+const MAX_SLICES = 4
 
-// Category breakdown (placeholder - will be populated from API when available)
-const mockCategoryData = [
-  { name: 'Crypto', value: 45, trades: 694, win_rate: 82 },
-  { name: 'Politics', value: 30, trades: 463, win_rate: 76 },
-  { name: 'Sports', value: 15, trades: 231, win_rate: 71 },
-  { name: 'Other', value: 10, trades: 155, win_rate: 68 },
-]
-
-// Open positions (placeholder - will be populated from API when available)
-const mockPositions = [
-  { market: 'Will BTC > $100K by March 2025?', outcome: 'Yes', size: 45000, entry: 0.52, current: 0.68, pnl: 7200 },
-  { market: 'Will Trump win 2024 election?', outcome: 'Yes', size: 32000, entry: 0.48, current: 0.92, pnl: 14080 },
-  { market: 'Will Fed cut rates in Jan?', outcome: 'No', size: 28000, entry: 0.35, current: 0.41, pnl: 1680 },
-]
-
-// Recent trades (placeholder - will be populated from API when available)
-const mockRecentTrades = [
-  { market: 'ETH > $4K by EOY', outcome: 'Yes', side: 'BUY', size: 8500, price: 0.62, time: '2h ago' },
-  { market: 'BTC ATH in December', outcome: 'Yes', side: 'SELL', size: 12000, price: 0.89, time: '5h ago' },
-  { market: 'SpaceX launch success', outcome: 'Yes', side: 'BUY', size: 5200, price: 0.78, time: '8h ago' },
-]
-
-const COLORS = ['#0ea5e9', '#8b5cf6', '#f59e0b', '#64748b']
+const AXIS = '#64748b'
+const GRID = '#1e293b'
 
 const tierStyles: Record<string, string> = {
   Diamond: 'bg-gradient-to-r from-cyan-400 to-blue-400 text-slate-900',
@@ -77,10 +64,45 @@ const tierStyles: Record<string, string> = {
 
 const formatTier = (tier: string) => tier.charAt(0).toUpperCase() + tier.slice(1).toLowerCase()
 
+const prettyCategory = (c: string) =>
+  c === 'UNCLASSIFIED' ? 'Unclassified' : c.charAt(0) + c.slice(1).toLowerCase()
+
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+
+const cents = (p: number) => `${(p * 100).toFixed(0)}¢`
+
+/** Top slices kept whole, the tail summed into one neutral remainder. */
+function foldCategories(categories: TraderCategory[]) {
+  const ranked = [...categories].sort((a, b) => b.volume - a.volume)
+  const head = ranked.slice(0, MAX_SLICES)
+  const tail = ranked.slice(MAX_SLICES)
+  const slices = head.map((c, i) => ({
+    key: c.category,
+    label: prettyCategory(c.category),
+    share_pct: c.share_pct,
+    trade_count: c.trade_count,
+    win_rate: c.win_rate,
+    color: CATEGORY_COLORS[i],
+  }))
+  if (tail.length) {
+    slices.push({
+      key: '__other__',
+      label: `Other (${tail.length})`,
+      share_pct: Math.round(tail.reduce((s, c) => s + c.share_pct, 0) * 10) / 10,
+      trade_count: tail.reduce((s, c) => s + c.trade_count, 0),
+      win_rate: null,
+      color: OTHER_COLOR,
+    })
+  }
+  return slices
+}
+
 export default function TraderProfilePage() {
   const params = useParams()
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'history'>('overview')
   const [trader, setTrader] = useState<TraderProfile | null>(null)
+  const [activity, setActivity] = useState<TraderActivity | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -94,6 +116,16 @@ export default function TraderProfilePage() {
         setError(null)
         const data = await api.getTrader(username)
         setTrader(data)
+
+        // Second call, deliberately not awaited together with the first: the
+        // header can render as soon as the profile lands, and the activity
+        // query is keyed on the address the profile returns.
+        if (data.proxy_address) {
+          api
+            .getTraderActivity(data.proxy_address)
+            .then(setActivity)
+            .catch((err) => console.error('Trader activity fetch error:', err))
+        }
       } catch (err) {
         setError('Failed to load trader profile. Make sure the API server is running.')
         console.error('Trader fetch error:', err)
@@ -104,7 +136,6 @@ export default function TraderProfilePage() {
     fetchTrader()
   }, [params.username])
 
-  // Loading state
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -114,7 +145,6 @@ export default function TraderProfilePage() {
     )
   }
 
-  // Error state
   if (error || !trader) {
     return (
       <div className="space-y-6">
@@ -127,20 +157,16 @@ export default function TraderProfilePage() {
         </Link>
         <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-6">
           <p className="text-red-400 font-medium">{error || 'Trader not found'}</p>
-          <p className="text-sm text-slate-400 mt-2">
-            Start the API server: <code className="bg-slate-800 px-2 py-0.5 rounded">cd aware-fund/services/api && uvicorn main:app --reload</code>
-          </p>
         </div>
       </div>
     )
   }
 
-  // Compute derived values
   const avgTradeSize = trader.total_trades > 0 ? trader.total_volume / trader.total_trades : 0
+  const pending = activity === null
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
       <Link
         href="/leaderboard"
         className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
@@ -152,21 +178,25 @@ export default function TraderProfilePage() {
       {/* Profile Header */}
       <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-          {/* Left: Avatar & Info */}
           <div className="flex items-start gap-4">
-            <div className="relative">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-3xl font-bold text-white">
-                {traderInitial(trader)}
-              </div>
+            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-3xl font-bold text-white">
+              {traderInitial(trader)}
             </div>
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold text-white">{traderName(trader)}</h1>
-                <span className={cn('px-3 py-1 text-sm font-semibold rounded-full', tierStyles[trader.tier] || tierStyles['BRONZE'])}>
+                <span
+                  className={cn(
+                    'px-3 py-1 text-sm font-semibold rounded-full',
+                    tierStyles[trader.tier] || tierStyles['BRONZE']
+                  )}
+                >
                   {formatTier(trader.tier)}
                 </span>
               </div>
-              <p className="text-slate-500 text-sm mt-1 font-mono">{trader.proxy_address?.slice(0, 10)}...{trader.proxy_address?.slice(-8)}</p>
+              <p className="text-slate-500 text-sm mt-1 font-mono">
+                {trader.proxy_address?.slice(0, 10)}...{trader.proxy_address?.slice(-8)}
+              </p>
               <div className="flex items-center gap-4 mt-3">
                 <div className="flex items-center gap-1 text-sm text-slate-400">
                   <Target className="h-4 w-4" />
@@ -180,14 +210,20 @@ export default function TraderProfilePage() {
             </div>
           </div>
 
-          {/* Right: Key Stats */}
           <div className="flex gap-6">
             <div className="text-center">
-              <p className="text-3xl font-bold text-white">{(trader.smart_money_score || 0).toFixed(1)}</p>
+              <p className="text-3xl font-bold text-white">
+                {(trader.smart_money_score || 0).toFixed(1)}
+              </p>
               <p className="text-sm text-slate-500">Smart Money Score</p>
             </div>
             <div className="text-center">
-              <p className={cn('text-3xl font-bold', (trader.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400')}>
+              <p
+                className={cn(
+                  'text-3xl font-bold',
+                  (trader.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                )}
+              >
                 {formatCurrency(trader.total_pnl || 0)}
               </p>
               <p className="text-sm text-slate-500">Total P&L</p>
@@ -212,15 +248,13 @@ export default function TraderProfilePage() {
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-slate-800/50 rounded-lg w-fit">
-        {['overview', 'positions', 'history'].map((tab) => (
+        {(['overview', 'positions', 'history'] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => setActiveTab(tab as any)}
+            onClick={() => setActiveTab(tab)}
             className={cn(
               'px-4 py-2 text-sm font-medium rounded-md transition-all capitalize',
-              activeTab === tab
-                ? 'bg-aware-500 text-white'
-                : 'text-slate-400 hover:text-white'
+              activeTab === tab ? 'bg-aware-500 text-white' : 'text-slate-400 hover:text-white'
             )}
           >
             {tab}
@@ -228,148 +262,371 @@ export default function TraderProfilePage() {
         ))}
       </div>
 
-      {/* Tab Content */}
       {activeTab === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Performance Chart */}
-          <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-5">
-            <h3 className="text-lg font-semibold text-white mb-4">Cumulative P&L</h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockPerformance}>
-                  <defs>
-                    <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} tickFormatter={(v) => `$${v / 1000}K`} />
-                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }} />
-                  <Area type="monotone" dataKey="pnl" stroke="#22c55e" strokeWidth={2} fill="url(#colorPnl)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Category Breakdown */}
-          <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-5">
-            <h3 className="text-lg font-semibold text-white mb-4">Category Breakdown</h3>
-            <div className="flex items-center gap-8">
-              <div className="w-40 h-40">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={mockCategoryData}
-                      innerRadius={45}
-                      outerRadius={70}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {mockCategoryData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="flex-1 space-y-3">
-                {mockCategoryData.map((cat, i) => (
-                  <div key={cat.name} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i] }} />
-                      <span className="text-sm text-slate-300">{cat.name}</span>
-                    </div>
-                    <div className="text-right">
-                      <span className="text-sm font-medium text-white">{cat.value}%</span>
-                      <span className="text-xs text-green-400 ml-2">({cat.win_rate}% win)</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <PnlCurveCard activity={activity} pending={pending} />
+          <CategoryCard activity={activity} pending={pending} />
         </div>
       )}
 
-      {activeTab === 'positions' && (
-        <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
-          <div className="p-4 border-b border-slate-800">
-            <h3 className="font-semibold text-white">Open Positions</h3>
-          </div>
-          <div className="divide-y divide-slate-800">
-            {mockPositions.map((pos, i) => (
-              <div key={i} className="p-4 grid grid-cols-6 gap-4 items-center">
-                <div className="col-span-2">
-                  <p className="text-sm text-white font-medium">{pos.market}</p>
-                  <span className="text-xs text-aware-400">{pos.outcome}</span>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-white">{formatCurrency(pos.size)}</p>
-                  <p className="text-xs text-slate-500">Size</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-white">{(pos.entry * 100).toFixed(0)}¢</p>
-                  <p className="text-xs text-slate-500">Entry</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-white">{(pos.current * 100).toFixed(0)}¢</p>
-                  <p className="text-xs text-slate-500">Current</p>
-                </div>
-                <div className="text-right">
-                  <p className={cn('text-sm font-medium', pos.pnl >= 0 ? 'text-green-400' : 'text-red-400')}>
-                    {pos.pnl >= 0 ? '+' : ''}{formatCurrency(pos.pnl)}
-                  </p>
-                  <p className="text-xs text-slate-500">Unrealized</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {activeTab === 'positions' && <PositionsCard activity={activity} pending={pending} />}
 
-      {activeTab === 'history' && (
-        <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
-          <div className="p-4 border-b border-slate-800">
-            <h3 className="font-semibold text-white">Recent Trades</h3>
-          </div>
-          <div className="divide-y divide-slate-800">
-            {mockRecentTrades.map((trade, i) => (
-              <div key={i} className="p-4 flex items-center gap-4">
-                <div className={cn(
-                  'p-2 rounded-lg',
-                  trade.side === 'BUY' ? 'bg-green-500/10' : 'bg-red-500/10'
-                )}>
-                  {trade.side === 'BUY' ? (
-                    <TrendingUp className="h-4 w-4 text-green-400" />
-                  ) : (
-                    <TrendingDown className="h-4 w-4 text-red-400" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <p className="text-sm text-white">{trade.market}</p>
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <span className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>{trade.side}</span>
-                    <span>•</span>
-                    <span>{trade.outcome}</span>
-                    <span>•</span>
-                    <span>{trade.time}</span>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-medium text-white">{formatCurrency(trade.size)}</p>
-                  <p className="text-xs text-slate-500">@ {(trade.price * 100).toFixed(0)}¢</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {activeTab === 'history' && <HistoryCard activity={activity} pending={pending} />}
     </div>
   )
 }
 
-function StatBox({ label, value, icon: Icon, color }: { label: string; value: string; icon: any; color: string }) {
+function Panel({
+  title,
+  caption,
+  children,
+}: {
+  title: string
+  caption?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
+      <div className="p-5 border-b border-slate-800">
+        <h3 className="font-semibold text-white">{title}</h3>
+        {caption && <p className="text-xs text-slate-500 mt-0.5">{caption}</p>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Empty({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="py-12 px-5 text-center">
+      <p className="text-sm text-slate-400">{title}</p>
+      {hint && <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">{hint}</p>}
+    </div>
+  )
+}
+
+function PnlCurveCard({
+  activity,
+  pending,
+}: {
+  activity: TraderActivity | null
+  pending: boolean
+}) {
+  const points = activity?.pnl_curve ?? []
+  // The curve can end below zero, so it is coloured by where it lands rather
+  // than assumed green.
+  const final = points.length ? points[points.length - 1].cumulative_pnl : 0
+  const hue = final >= 0 ? '#22c55e' : '#ef4444'
+
+  return (
+    <Panel
+      title="Cumulative realized P&L"
+      caption="Settled markets only. Open positions are estimates and live in the Positions tab."
+    >
+      {pending ? (
+        <Empty title="Loading…" />
+      ) : points.length < 2 ? (
+        <Empty
+          title="Not enough settled history yet"
+          hint="A point is added each day a market this trader held resolves. The curve appears once there are at least two."
+        />
+      ) : (
+        <div className="p-5">
+          <div className="h-64 -ml-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <defs>
+                  <linearGradient id="traderPnlFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={hue} stopOpacity={0.22} />
+                    <stop offset="100%" stopColor={hue} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={shortDate}
+                  stroke={AXIS}
+                  tick={{ fill: AXIS, fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  minTickGap={32}
+                />
+                <YAxis
+                  stroke={AXIS}
+                  tick={{ fill: AXIS, fontSize: 11 }}
+                  tickLine={false}
+                  axisLine={false}
+                  width={56}
+                  tickFormatter={(v) => formatCurrency(Number(v))}
+                />
+                {/* Break-even: above it the trader is up on settled markets. */}
+                <CartesianGrid horizontalPoints={[0]} stroke="#334155" vertical={false} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #1e293b',
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
+                  labelFormatter={(v) => new Date(v as string).toLocaleDateString()}
+                  formatter={(value, name) => [
+                    formatCurrency(Number(value)),
+                    name === 'cumulative_pnl' ? 'Cumulative' : 'That day',
+                  ]}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="cumulative_pnl"
+                  stroke={hue}
+                  strokeWidth={2}
+                  fill="url(#traderPnlFill)"
+                  dot={false}
+                  activeDot={{ r: 4, strokeWidth: 2, stroke: '#0f172a' }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mt-4 pt-4 border-t border-slate-800 flex items-baseline gap-2">
+            <span className="text-xs text-slate-500">Settled to date</span>
+            <span
+              className={cn(
+                'text-lg font-semibold tabular-nums',
+                final >= 0 ? 'text-green-400' : 'text-red-400'
+              )}
+            >
+              {final >= 0 ? '+' : '−'}
+              {formatCurrency(Math.abs(final))}
+            </span>
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function CategoryCard({
+  activity,
+  pending,
+}: {
+  activity: TraderActivity | null
+  pending: boolean
+}) {
+  const slices = foldCategories(activity?.categories ?? [])
+
+  return (
+    <Panel title="Category breakdown" caption="Share of traded volume, by market category.">
+      {pending ? (
+        <Empty title="Loading…" />
+      ) : slices.length === 0 ? (
+        <Empty title="No trades recorded for this wallet yet" />
+      ) : (
+        <div className="p-5 flex items-center gap-8">
+          <div className="w-40 h-40 shrink-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={slices}
+                  innerRadius={45}
+                  outerRadius={70}
+                  paddingAngle={4}
+                  dataKey="share_pct"
+                  nameKey="label"
+                  stroke="none"
+                >
+                  {slices.map((s) => (
+                    <Cell key={s.key} fill={s.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #1e293b',
+                    borderRadius: 8,
+                    fontSize: 12,
+                  }}
+                  formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          {/* Direct labels carry identity, so the slices never rest on colour
+              alone — which is also what makes the tight hue pair legible. */}
+          <div className="flex-1 space-y-3 min-w-0">
+            {slices.map((s) => (
+              <div key={s.key} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="w-2.5 h-2.5 rounded-sm shrink-0"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span className="text-sm text-slate-300 truncate">{s.label}</span>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="text-sm font-medium text-white tabular-nums">
+                    {s.share_pct.toFixed(1)}%
+                  </span>
+                  {s.win_rate !== null && (
+                    <span className="text-xs text-slate-500 ml-2 tabular-nums">
+                      {s.win_rate.toFixed(0)}% win
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function PositionsCard({
+  activity,
+  pending,
+}: {
+  activity: TraderActivity | null
+  pending: boolean
+}) {
+  const positions = activity?.open_positions ?? []
+  const hours = activity?.mark_max_age_hours ?? 6
+
+  return (
+    <Panel
+      title="Open positions"
+      caption={`Net shares held in markets that have not resolved, marked to the last trade on each token. Positions with no trade in ${hours}h are left unpriced.`}
+    >
+      {pending ? (
+        <Empty title="Loading…" />
+      ) : positions.length === 0 ? (
+        <Empty
+          title="No open positions"
+          hint="Every market this wallet traded has already resolved, or its buys and sells net out."
+        />
+      ) : (
+        <div className="divide-y divide-slate-800">
+          {positions.map((pos) => (
+            <div
+              key={`${pos.condition_id}-${pos.outcome}`}
+              className="p-4 grid grid-cols-2 md:grid-cols-6 gap-4 items-center"
+            >
+              <div className="col-span-2">
+                <p className="text-sm text-white font-medium line-clamp-2">{pos.title}</p>
+                <span className="text-xs text-aware-400">{pos.outcome}</span>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-white tabular-nums">{formatNumber(pos.shares, 0)}</p>
+                <p className="text-xs text-slate-500">Shares</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-white tabular-nums">{cents(pos.avg_entry_price)}</p>
+                <p className="text-xs text-slate-500">Entry</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-white tabular-nums">
+                  {pos.current_price === null ? (
+                    <span className="text-slate-500" title={`No trade on this token in the last ${hours}h`}>
+                      —
+                    </span>
+                  ) : (
+                    cents(pos.current_price)
+                  )}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {pos.priced_at ? getTimeAgo(pos.priced_at) : 'No recent price'}
+                </p>
+              </div>
+              <div className="text-right">
+                {pos.unrealized_pnl === null ? (
+                  <p className="text-sm text-slate-500">—</p>
+                ) : (
+                  <p
+                    className={cn(
+                      'text-sm font-medium tabular-nums',
+                      pos.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                    )}
+                  >
+                    {pos.unrealized_pnl >= 0 ? '+' : '−'}
+                    {formatCurrency(Math.abs(pos.unrealized_pnl))}
+                  </p>
+                )}
+                <p className="text-xs text-slate-500">Unrealized</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function HistoryCard({
+  activity,
+  pending,
+}: {
+  activity: TraderActivity | null
+  pending: boolean
+}) {
+  const trades = activity?.recent_trades ?? []
+
+  return (
+    <Panel title="Recent trades" caption="Latest fills observed on Polymarket for this wallet.">
+      {pending ? (
+        <Empty title="Loading…" />
+      ) : trades.length === 0 ? (
+        <Empty title="No trades recorded for this wallet yet" />
+      ) : (
+        <div className="divide-y divide-slate-800">
+          {trades.map((trade) => (
+            <div key={`${trade.ts}-${trade.market_slug}-${trade.outcome}-${trade.price}`} className="p-4 flex items-center gap-4">
+              <div
+                className={cn(
+                  'p-2 rounded-lg shrink-0',
+                  trade.side === 'BUY' ? 'bg-green-500/10' : 'bg-red-500/10'
+                )}
+              >
+                {trade.side === 'BUY' ? (
+                  <TrendingUp className="h-4 w-4 text-green-400" />
+                ) : (
+                  <TrendingDown className="h-4 w-4 text-red-400" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white truncate">{trade.title}</p>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span className={trade.side === 'BUY' ? 'text-green-400' : 'text-red-400'}>
+                    {trade.side}
+                  </span>
+                  <span>•</span>
+                  <span className="truncate">{trade.outcome}</span>
+                  <span>•</span>
+                  <span className="shrink-0">{getTimeAgo(trade.ts)}</span>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-medium text-white tabular-nums">
+                  {formatCurrency(trade.notional)}
+                </p>
+                <p className="text-xs text-slate-500 tabular-nums">@ {cents(trade.price)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function StatBox({
+  label,
+  value,
+  icon: Icon,
+  color,
+}: {
+  label: string
+  value: string
+  icon: any
+  color: string
+}) {
   return (
     <div className="rounded-lg bg-slate-800/50 p-4">
       <div className="flex items-center gap-2 mb-2">

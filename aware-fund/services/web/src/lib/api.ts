@@ -26,6 +26,56 @@ export interface Trader {
   ml_score?: number
 }
 
+export interface TraderPnlPoint {
+  date: string
+  realized_pnl: number
+  cumulative_pnl: number
+}
+
+export interface TraderCategory {
+  category: string
+  volume: number
+  trade_count: number
+  share_pct: number
+  /** null until at least one position in the category has resolved. */
+  win_rate: number | null
+  settled_positions: number
+}
+
+export interface TraderOpenPosition {
+  condition_id: string
+  market_slug: string
+  title: string
+  outcome: string
+  shares: number
+  cost: number
+  avg_entry_price: number
+  /** null when the token has no recent print, so the mark would be a guess. */
+  current_price: number | null
+  unrealized_pnl: number | null
+  priced_at: string | null
+}
+
+export interface TraderTrade {
+  ts: string
+  market_slug: string
+  title: string
+  outcome: string
+  side: string
+  price: number
+  size: number
+  notional: number
+}
+
+export interface TraderActivity {
+  proxy_address: string
+  mark_max_age_hours: number
+  pnl_curve: TraderPnlPoint[]
+  categories: TraderCategory[]
+  open_positions: TraderOpenPosition[]
+  recent_trades: TraderTrade[]
+}
+
 export interface TraderProfile {
   username: string
   pseudonym?: string | null
@@ -92,6 +142,8 @@ export interface ConsensusSignal {
   trader_count: number
   total_volume: number
   avg_price: number
+  /** Mean Smart Money Score of the traders forming this signal. */
+  avg_score: number
   consensus_strength: 'STRONG' | 'MODERATE' | 'WEAK'
 }
 
@@ -546,6 +598,10 @@ export const api = {
       first_trade_at: (raw.first_trade_at as string | null | undefined) ?? null,
       last_trade_at: (raw.last_trade_at as string | null | undefined) ?? null,
     }
+  },
+
+  async getTraderActivity(address: string): Promise<TraderActivity> {
+    return fetchJson<TraderActivity>(`/api/traders/${encodeURIComponent(address)}/activity`)
   },
 
   async getHiddenGems(limit = 10): Promise<DiscoveryResponse> {
