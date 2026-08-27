@@ -8,15 +8,20 @@ services:
   redpanda:
     image: redpandadata/redpanda:v24.2.11
     container_name: aware-redpanda
-    mem_limit: 1g
+    # Above --memory below: seastar reserves that, and the process needs
+    # headroom on top of it.
+    mem_limit: 1300m
     command:
       - redpanda
       - start
       - --overprovisioned
       - --smp
       - "2"
+      # Must fit inside mem_limit: seastar reserves this much physically and
+      # refuses to start otherwise. 1G is ample for this throughput (a few
+      # hundred messages every 30s) and leaves room on an 8GB host.
       - --memory
-      - "2G"
+      - "1G"
       - --reserve-memory
       - "0M"
       - --node-id
