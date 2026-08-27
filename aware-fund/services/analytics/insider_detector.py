@@ -935,6 +935,37 @@ class InsiderDetector:
             return {}
 
         resolved = {(r[0], r[1]): r[2] for r in rows}
+
+        # Fall back to the outcome index for markets whose outcomes are not
+        # labelled Yes/No — a sports market names the teams, so an alert saying
+        # "YES" matches no label there. Polymarket orders the outcomes with the
+        # affirmative first, and the data agrees: index 0 is YES/UP, index 1 is
+        # NO/DOWN. Only the two directions that have an index are mapped;
+        # anything else is left unresolved rather than guessed at.
+        by_index = {'YES': 0, 'UP': 0, 'NO': 1, 'DOWN': 1}
+        missing = {(slug, out) for slug, out in pairs
+                   if (slug, out) not in resolved and out in by_index}
+        if missing:
+            try:
+                index_rows = self.ch.query(
+                    """
+                    SELECT market_slug, outcome_index,
+                           argMax(token_id, ts) AS token_id
+                    FROM polybot.aware_global_trades_dedup
+                    WHERE market_slug IN %(slugs)s
+                      AND outcome_index IN (0, 1)
+                    GROUP BY market_slug, outcome_index
+                    """,
+                    parameters={'slugs': tuple(sorted({s for s, _ in missing}))},
+                ).result_rows
+                by_slug_index = {(r[0], int(r[1])): r[2] for r in index_rows}
+                for slug, out in missing:
+                    token_id = by_slug_index.get((slug, by_index[out]))
+                    if token_id:
+                        resolved[(slug, out)] = token_id
+            except Exception as e:
+                logger.error(f"Failed to resolve token ids by outcome index: {e}")
+
         matched = sum(1 for p in pairs if p in resolved)
         if matched < len(pairs):
             logger.info(
