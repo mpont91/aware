@@ -67,6 +67,11 @@ interface FundOverview {
   open_positions: number
   num_traders: number
   last_updated: string
+  /** False before the strategy has filled anything for this fund. */
+  has_data: boolean
+  /** True when the figures are split across funds that copied the same token,
+   *  rather than attributed exactly. */
+  apportioned: boolean
 }
 
 interface FundPosition {
@@ -137,36 +142,29 @@ function FundPageContent() {
 
         const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
-        // Fetch fund overview with fund type
-        const navResponse = await fetch(`${API_BASE}/api/fund/nav?fund_id=${selectedFund}`)
-        if (navResponse.ok) {
-          const navData = await navResponse.json()
-          setOverview({
-            fund_id: navData.fund_id || selectedFund,
-            nav: navData.nav || 10000,
-            capital: navData.capital || 10000,
-            position_value: navData.position_value || 0,
-            unrealized_pnl: navData.unrealized_pnl || 0,
-            realized_pnl: navData.realized_pnl || 0,
-            total_return: navData.total_return || 0,
-            open_positions: navData.open_positions || 0,
-            num_traders: navData.num_traders || (selectedFund.includes('10') ? 10 : selectedFund.includes('25') ? 25 : 0),
-            last_updated: navData.last_updated || new Date().toISOString(),
-          })
-        } else {
-          // Set default values if API not available
+        // Real P&L for this fund. /api/fund/nav reports a NAV derived from
+        // investor deposits and a positions table nothing writes, so it is
+        // 10,000 and zeros for every fund; this reads what the strategies
+        // actually did.
+        const pnlResponse = await fetch(`${API_BASE}/api/fund/pnl?fund_id=${selectedFund}`)
+        if (pnlResponse.ok) {
+          const p = await pnlResponse.json()
           setOverview({
             fund_id: selectedFund,
-            nav: 10000,
-            capital: 10000,
-            position_value: 0,
-            unrealized_pnl: 0,
-            realized_pnl: 0,
-            total_return: 0,
-            open_positions: 0,
-            num_traders: selectedFund.includes('10') ? 10 : selectedFund.includes('25') ? 25 : 0,
-            last_updated: new Date().toISOString(),
+            nav: p.cost_usd + p.total_pnl,
+            capital: p.cost_usd,
+            position_value: p.cost_usd + p.unrealized_pnl,
+            unrealized_pnl: p.unrealized_pnl,
+            realized_pnl: p.realized_pnl,
+            total_return: p.roi_pct,
+            open_positions: p.positions,
+            num_traders: 0,
+            last_updated: p.calculated_at || new Date().toISOString(),
+            has_data: p.has_data,
+            apportioned: p.apportioned,
           })
+        } else {
+          setOverview(null)
         }
 
         // Fetch positions
@@ -327,24 +325,45 @@ function FundPageContent() {
               : 'bg-gradient-to-br from-purple-500/10 to-violet-500/10 border-purple-500/30'
           )}>
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div>
-                <p className="text-slate-400 text-sm">Net Asset Value (NAV)</p>
-                <div className="flex items-baseline gap-3 mt-1">
-                  <span className="text-4xl font-bold text-white">
-                    {formatCurrency(overview.nav)}
-                  </span>
-                  <span className={cn(
-                    'flex items-center text-lg font-semibold',
-                    isPositive ? 'text-green-400' : 'text-red-400'
-                  )}>
-                    {isPositive ? <ArrowUpRight className="h-5 w-5" /> : <ArrowDownRight className="h-5 w-5" />}
-                    {returnPct.toFixed(2)}%
-                  </span>
+                <div>
+                  <p className="text-slate-400 text-sm">Current value</p>
+                  <div className="flex items-baseline gap-3 mt-1">
+                    <span className="text-4xl font-bold text-white">
+                      {overview.has_data ? formatCurrency(overview.nav) : '\u2014'}
+                    </span>
+                    {overview.has_data && (
+                      <span className={cn(
+                        'flex items-center text-lg font-semibold',
+                        isPositive ? 'text-green-400' : 'text-red-400'
+                      )}>
+                        {isPositive ? <ArrowUpRight className="h-5 w-5" /> : <ArrowDownRight className="h-5 w-5" />}
+                        {returnPct.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+                  {overview.has_data ? (
+                    <>
+                      <p className="text-slate-500 text-sm mt-1">
+                        Invested: {formatCurrency(overview.capital)}
+                        {' \u00b7 '}
+                        {overview.open_positions} position{overview.open_positions === 1 ? '' : 's'}
+                      </p>
+                      {overview.apportioned && (
+                        <p
+                          className="text-slate-600 text-xs mt-1"
+                          title="Several funds copy the same market, so each result is split by how many shares each fund asked for."
+                        >
+                          Figures apportioned across funds sharing a position
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-slate-500 text-sm mt-1">
+                      This fund has not traded yet. Numbers appear once it fills
+                      its first order.
+                    </p>
+                  )}
                 </div>
-                <p className="text-slate-500 text-sm mt-1">
-                  Initial Capital: {formatCurrency(overview.capital)}
-                </p>
-              </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-slate-800/50 rounded-lg p-4 text-center">

@@ -234,15 +234,44 @@ def split_mirror_by_fund(client: ClickHouseClient,
         if not total:
             continue
         for fund_id, requested in shares.items():
-            f = by_fund.setdefault(fund_id, {'fund_id': fund_id, 'cost_usd': 0.0, 'pnl_usd': 0.0})
+            f = by_fund.setdefault(fund_id, {
+                'fund_id': fund_id, 'cost_usd': 0.0, 'pnl_usd': 0.0,
+                'realized_pnl': 0.0, 'unrealized_pnl': 0.0, 'positions': 0,
+            })
             share = requested / total
             f['cost_usd'] += float(p['cost_usd']) * share
             f['pnl_usd'] += p['pnl_usd'] * share
+            # Split the same way the per-strategy figures are, so a fund page
+            # can distinguish settled losses from positions still in play.
+            if p['mark_status'] == 'RESOLVED':
+                f['realized_pnl'] += p['pnl_usd'] * share
+            else:
+                f['unrealized_pnl'] += p['pnl_usd'] * share
+            f['positions'] += 1
 
     for f in by_fund.values():
         f['roi_pct'] = (f['pnl_usd'] / f['cost_usd'] * 100) if f['cost_usd'] else 0.0
 
     return sorted(by_fund.values(), key=lambda r: -r['cost_usd'])
+
+
+def store_by_fund(client: ClickHouseClient, calculated_at: datetime,
+                  by_fund: List[Dict[str, Any]]) -> None:
+    """Persist the per-fund breakdown so the fund pages have something real."""
+    if not by_fund:
+        return
+    client.client.insert(
+        'polybot.aware_fund_pnl',
+        [[
+            calculated_at, f['fund_id'], int(f['positions']), float(f['cost_usd']),
+            float(f['realized_pnl']), float(f['unrealized_pnl']),
+            float(f['pnl_usd']), float(f['roi_pct']),
+        ] for f in by_fund],
+        column_names=[
+            'calculated_at', 'fund_id', 'positions', 'cost_usd',
+            'realized_pnl', 'unrealized_pnl', 'total_pnl', 'roi_pct',
+        ],
+    )
 
 
 def store(client: ClickHouseClient, calculated_at: datetime,
@@ -370,6 +399,7 @@ def run(dry_run: bool = False) -> Dict[str, Any]:
 
     if not dry_run:
         store(client, calculated_at, positions, totals)
+        store_by_fund(client, calculated_at, by_fund)
         logger.info("Stored P&L snapshot for %d strategies, %d positions",
                     len(totals), len(positions))
 

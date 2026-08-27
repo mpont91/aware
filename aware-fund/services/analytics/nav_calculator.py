@@ -23,11 +23,16 @@ from clickhouse_driver import Client
 logger = logging.getLogger(__name__)
 
 # Fund types we track
+# Must match FundType.java. PSI-25 and PSI-ALPHA were missing, so the dashboard
+# offered them in its selector while nothing ever produced a valuation for them
+# and their pages showed "No data available".
 FUND_TYPES = [
     "PSI-10",
+    "PSI-25",
     "PSI-SPORTS",
     "PSI-CRYPTO",
     "PSI-POLITICS",
+    "PSI-ALPHA",
     "ALPHA-INSIDER",
     "ALPHA-EDGE",
     "ALPHA-ARB"

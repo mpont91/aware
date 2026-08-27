@@ -55,3 +55,25 @@ CREATE TABLE IF NOT EXISTS polybot.aware_strategy_pnl
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(calculated_at)
 ORDER BY (calculated_at, strategy);
+
+-- Per-fund breakdown of the mirror strategy.
+--
+-- Kept separate from aware_strategy_pnl because the numbers are of a different
+-- quality: several funds copy the same token, so a fill cannot be attributed
+-- to one fund exactly. Each token's P&L is apportioned by how many shares each
+-- fund asked for. Good enough to compare funds against each other, not an
+-- exact ledger.
+CREATE TABLE IF NOT EXISTS polybot.aware_fund_pnl
+(
+    calculated_at   DateTime64(3),
+    fund_id         LowCardinality(String),
+    positions       UInt32,
+    cost_usd        Float64,
+    realized_pnl    Float64,
+    unrealized_pnl  Float64,
+    total_pnl       Float64,
+    roi_pct         Float64
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(calculated_at)
+ORDER BY (calculated_at, fund_id);

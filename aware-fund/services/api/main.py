@@ -2621,6 +2621,93 @@ async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/fund/pnl")
+async def get_fund_pnl(fund_id: str = Query(...)):
+    """
+    P&L for one fund, from the latest snapshot.
+
+    Apportioned, not exact: several funds copy the same token, so each token's
+    result is split by how many shares each fund asked for. Fine for comparing
+    funds, not an exact ledger — the response says so.
+    """
+    try:
+        client = get_clickhouse_client()
+        fund = fund_id.upper()
+
+        # ALPHA-ARB is the complete-set arbitrage engine, which trades directly
+        # rather than mirroring anyone, so it has no rows in aware_fund_pnl.
+        # Its figures live under the GABAGOOL strategy, and unlike the mirror
+        # split those are exact rather than apportioned.
+        if fund == 'ALPHA-ARB':
+            direct = client.query("""
+                SELECT positions, cost_usd - stale_cost_usd, realized_pnl,
+                       unrealized_pnl, total_pnl, roi_pct, calculated_at
+                FROM polybot.aware_strategy_pnl
+                WHERE strategy = 'GABAGOOL'
+                ORDER BY calculated_at DESC
+                LIMIT 1
+            """)
+            if direct.result_rows:
+                r = direct.result_rows[0]
+                return {
+                    'fund_id': fund,
+                    'has_data': True,
+                    'apportioned': False,
+                    'positions': int(r[0]),
+                    'cost_usd': float(r[1]),
+                    'realized_pnl': float(r[2]),
+                    'unrealized_pnl': float(r[3]),
+                    'total_pnl': float(r[4]),
+                    'roi_pct': float(r[5]),
+                    'calculated_at': r[6].isoformat() if r[6] else None,
+                }
+
+        result = client.query("""
+            SELECT positions, cost_usd, realized_pnl, unrealized_pnl,
+                   total_pnl, roi_pct, calculated_at
+            FROM polybot.aware_fund_pnl
+            WHERE fund_id = %(fund_id)s
+              AND calculated_at = (
+                  SELECT max(calculated_at) FROM polybot.aware_fund_pnl
+              )
+            LIMIT 1
+        """, parameters={'fund_id': fund})
+
+        if not result.result_rows:
+            return {
+                'fund_id': fund,
+                'has_data': False,
+                'apportioned': True,
+                'positions': 0,
+                'cost_usd': 0.0,
+                'realized_pnl': 0.0,
+                'unrealized_pnl': 0.0,
+                'total_pnl': 0.0,
+                'roi_pct': 0.0,
+                'calculated_at': None,
+            }
+
+        r = result.result_rows[0]
+        return {
+            'fund_id': fund,
+            'has_data': True,
+            'apportioned': True,
+            'positions': int(r[0]),
+            'cost_usd': float(r[1]),
+            'realized_pnl': float(r[2]),
+            'unrealized_pnl': float(r[3]),
+            'total_pnl': float(r[4]),
+            'roi_pct': float(r[5]),
+            'calculated_at': r[6].isoformat() if r[6] else None,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get fund P&L: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ml/health")
 async def get_ml_health():
     """
