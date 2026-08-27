@@ -59,13 +59,16 @@ class MarketClassificationJob:
         Returns:
             List of market_slug strings needing classification
         """
+        # An unmatched LEFT JOIN row yields the type's default, not NULL, unless
+        # join_use_nulls is set. market_slug is LowCardinality(String), so a market
+        # with no classification comes back as '' and `IS NULL` never matches it.
         query = """
         SELECT DISTINCT t.market_slug
         FROM polybot.aware_global_trades_dedup t
         LEFT JOIN polybot.aware_market_classifications c FINAL
             ON t.market_slug = c.market_slug
         WHERE t.market_slug != ''
-          AND c.market_slug IS NULL
+          AND c.market_slug = ''
         """
 
         try:
@@ -260,7 +263,7 @@ class MarketClassificationJob:
             LEFT JOIN polybot.aware_market_classifications c FINAL
                 ON t.market_slug = c.market_slug
             WHERE t.market_slug != ''
-              AND c.market_slug IS NULL
+              AND c.market_slug = ''
             """
 
             result = self.ch.query(unclassified_query)
