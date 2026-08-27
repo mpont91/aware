@@ -11,7 +11,7 @@ positions we really hold (order placements are not, most are cancelled).
 
 Positions are marked into three buckets:
   - RESOLVED -> payout of 1 or 0 per share. Definitive.
-  - OPEN     -> current best bid, only if the quote is fresh. Unrealised.
+  - OPEN     -> current best bid, only if the quote is fresh. Unrealized.
   - STALE    -> unresolved but the last quote is older than MARK_MAX_AGE_MIN.
                 Excluded from total P&L and ROI: an expired 15-minute market
                 still quoting 0.99 from hours ago would otherwise book a large

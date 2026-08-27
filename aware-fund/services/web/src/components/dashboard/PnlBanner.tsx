@@ -94,12 +94,36 @@ export function PnlBanner() {
             </span>
           </div>
 
-          <p className="text-slate-400 text-sm mt-1">
-            {/* Realised is settled and final; unrealised still moves. */}
-            <span className="tabular-nums">{money(pnl.realized_pnl)}</span> realised
-            {' · '}
-            <span className="tabular-nums">{money(pnl.unrealized_pnl)}</span> open
-          </p>
+          {/* The split matters more than the total: realized is settled and
+              cannot change, unrealized is a mark-to-market estimate that moves
+              until each market resolves. Shown as two labelled figures rather
+              than a sentence, so they can be compared at a glance. */}
+          <div className="flex gap-6 mt-3">
+            <div>
+              <p className="text-xs text-slate-500">Realized</p>
+              <p
+                className={[
+                  'text-sm font-semibold tabular-nums',
+                  pnl.realized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400',
+                ].join(' ')}
+                title="Settled: markets that have resolved. This will not change."
+              >
+                {money(pnl.realized_pnl)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500">Unrealized</p>
+              <p
+                className={[
+                  'text-sm font-semibold tabular-nums',
+                  pnl.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400',
+                ].join(' ')}
+                title="Open positions at current market price. Moves until they resolve."
+              >
+                {money(pnl.unrealized_pnl)}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="flex gap-8">
