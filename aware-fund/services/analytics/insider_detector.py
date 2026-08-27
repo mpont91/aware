@@ -227,7 +227,11 @@ class InsiderDetector:
                 proxy_address,
                 username,
                 market_slug,
-                side,
+                -- The outcome, not the side. InsiderAlert.direction is
+                -- documented as "YES" or "NO" and consumed downstream as the
+                -- outcome to trade; this detector was putting BUY or SELL in
+                -- it, which named no tradeable token.
+                outcome,
                 sum(notional) as total_bet,
                 count() as trade_count,
                 min(ts) as first_trade,
@@ -236,7 +240,7 @@ class InsiderDetector:
             WHERE ts >= now() - INTERVAL {hours} HOUR
               AND proxy_address != ''
               {market_exclusion}
-            GROUP BY proxy_address, username, market_slug, side
+            GROUP BY proxy_address, username, market_slug, outcome
         ),
         trader_stats AS (
             SELECT
@@ -245,7 +249,7 @@ class InsiderDetector:
                 sum(total_bet) as total_volume,
                 count(DISTINCT market_slug) as unique_markets,
                 argMax(market_slug, total_bet) as main_market,
-                argMax(side, total_bet) as main_direction,
+                argMax(outcome, total_bet) as main_direction,
                 max(total_bet) as max_market_bet
             FROM recent_trades
             GROUP BY proxy_address, username
@@ -899,6 +903,78 @@ class InsiderDetector:
 
         return alerts
 
+    def _resolve_token_ids(self, alerts: list) -> dict:
+        """
+        Map each (market_slug, outcome) an alert names to its token id.
+
+        Outcome labels are not always "Yes"/"No" — a sports market names the
+        teams — so the match is on the label the trades actually carry,
+        uppercased. A market whose outcome the alert does not name resolves to
+        nothing and the alert goes out without a token, which the strategy
+        skips rather than guessing.
+        """
+        pairs = {(a.market_slug, (a.direction or '').upper())
+                 for a in alerts if a.market_slug and a.direction}
+        if not pairs:
+            return {}
+
+        slugs = sorted({slug for slug, _ in pairs})
+        try:
+            rows = self.ch.query(
+                """
+                SELECT market_slug, upper(outcome) AS outcome,
+                       argMax(token_id, ts) AS token_id
+                FROM polybot.aware_global_trades_dedup
+                WHERE market_slug IN %(slugs)s
+                GROUP BY market_slug, outcome
+                """,
+                parameters={'slugs': tuple(slugs)},
+            ).result_rows
+        except Exception as e:
+            logger.error(f"Failed to resolve token ids for alerts: {e}")
+            return {}
+
+        resolved = {(r[0], r[1]): r[2] for r in rows}
+
+        # Fall back to the outcome index for markets whose outcomes are not
+        # labelled Yes/No — a sports market names the teams, so an alert saying
+        # "YES" matches no label there. Polymarket orders the outcomes with the
+        # affirmative first, and the data agrees: index 0 is YES/UP, index 1 is
+        # NO/DOWN. Only the two directions that have an index are mapped;
+        # anything else is left unresolved rather than guessed at.
+        by_index = {'YES': 0, 'UP': 0, 'NO': 1, 'DOWN': 1}
+        missing = {(slug, out) for slug, out in pairs
+                   if (slug, out) not in resolved and out in by_index}
+        if missing:
+            try:
+                index_rows = self.ch.query(
+                    """
+                    SELECT market_slug, outcome_index,
+                           argMax(token_id, ts) AS token_id
+                    FROM polybot.aware_global_trades_dedup
+                    WHERE market_slug IN %(slugs)s
+                      AND outcome_index IN (0, 1)
+                    GROUP BY market_slug, outcome_index
+                    """,
+                    parameters={'slugs': tuple(sorted({s for s, _ in missing}))},
+                ).result_rows
+                by_slug_index = {(r[0], int(r[1])): r[2] for r in index_rows}
+                for slug, out in missing:
+                    token_id = by_slug_index.get((slug, by_index[out]))
+                    if token_id:
+                        resolved[(slug, out)] = token_id
+            except Exception as e:
+                logger.error(f"Failed to resolve token ids by outcome index: {e}")
+
+        matched = sum(1 for p in pairs if p in resolved)
+        if matched < len(pairs):
+            logger.info(
+                "Resolved token ids for %d of %d alert markets; the rest name "
+                "an outcome that has no trades on record",
+                matched, len(pairs),
+            )
+        return resolved
+
     def save_alerts(self, alerts: list[InsiderAlert]) -> int:
         """
         Save alerts to ClickHouse for Java strategy-service to consume.
@@ -917,6 +993,22 @@ class InsiderDetector:
         if not alerts:
             return 0
 
+        # Signal strength, which ALPHA-INSIDER filters on. The detector was
+        # not emitting it at all, so every signal took the consumer's 0.5
+        # default and fell under its 0.6 minimum — silently, at debug level,
+        # which is why the fund received alerts and never placed an order.
+        #
+        # Derived from severity, whose levels already say how actionable each
+        # one is: LOW is "interesting but not actionable" and MEDIUM "worth
+        # monitoring", so both stay under the bar; HIGH is "consider following"
+        # and CRITICAL "act quickly", so both clear it.
+        severity_strength = {
+            'LOW': 0.3,
+            'MEDIUM': 0.5,
+            'HIGH': 0.75,
+            'CRITICAL': 1.0,
+        }
+
         # Map signal type to alert_type expected by Java
         signal_to_alert_type = {
             'NEW_ACCOUNT_WHALE': 'INSIDER_DETECTED',
@@ -924,6 +1016,13 @@ class InsiderDetector:
             'SMART_MONEY_DIVERGENCE': 'SMART_MONEY_ENTRY',
             'WHALE_ANOMALY': 'UNUSUAL_ACTIVITY',
         }
+
+        # Resolve the token each alert points at. ALPHA-INSIDER cannot act on
+        # an alert without one — it knows the market and the direction but not
+        # which outcome token to buy — and was dropping every single alert with
+        # "missing token_id in metadata". One batch query rather than one per
+        # alert: outcomes are shared across alerts on the same market.
+        token_ids = self._resolve_token_ids(alerts)
 
         # Prepare data for insert into aware_alerts
         data = []
@@ -933,14 +1032,22 @@ class InsiderDetector:
             )
 
             # Build metadata JSON with details for strategy
-            metadata = json.dumps({
+            fields = {
                 'signal_type': alert.signal_type.value,
                 'direction': alert.direction,
                 'confidence': alert.confidence,
+                'strength': severity_strength.get(alert.severity.value, 0.5),
                 'total_volume_usd': alert.total_volume_usd,
                 'num_traders': alert.num_traders,
                 'traders_involved': alert.traders_involved,
-            })
+            }
+            token_id = token_ids.get((alert.market_slug, (alert.direction or '').upper()))
+            if token_id:
+                fields['token_id'] = token_id
+                # The label of the token, so the signal records the outcome the
+                # traders actually took instead of defaulting to "Yes".
+                fields['outcome'] = alert.direction
+            metadata = json.dumps(fields)
 
             data.append([
                 str(uuid.uuid4()),          # id
