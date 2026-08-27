@@ -266,8 +266,17 @@ class ConsensusDetector:
     def _get_smart_money_trades(self, market_slug: str) -> list[dict]:
         """Get smart money trades for a market"""
         safe_market_slug = sanitize_market_slug(market_slug)
+        # Joined on proxy_address, not username. Practically no Polymarket
+        # wallet has a username set — all 1793 scored traders above the
+        # threshold have it empty — so matching on it paired every trade
+        # carrying an empty username with every score carrying one. For a busy
+        # market that is 15 million rows out of a few thousand trades, pulled
+        # into Python, for each of a hundred markets: the job was OOM-killed
+        # part way through every run and the pipeline never reached the steps
+        # after it.
         query = f"""
         SELECT
+            t.proxy_address,
             t.username,
             t.side,
             t.outcome,
@@ -278,10 +287,11 @@ class ConsensusDetector:
             s.total_score
         FROM polybot.aware_global_trades t
         INNER JOIN (
-            SELECT username, total_score
+            SELECT proxy_address, total_score
             FROM polybot.aware_smart_money_scores FINAL
             WHERE total_score >= {self.config.min_total_score}
-        ) s ON t.username = s.username
+              AND proxy_address != ''
+        ) s ON t.proxy_address = s.proxy_address
         WHERE
             t.market_slug = '{safe_market_slug}'
             AND t.ts >= now() - INTERVAL {self.config.lookback_hours} HOUR
@@ -294,14 +304,15 @@ class ConsensusDetector:
 
             for row in result.result_rows:
                 trades.append({
-                    'username': row[0],
-                    'side': row[1],
-                    'outcome': row[2],
-                    'size': row[3],
-                    'notional': row[4],
-                    'price': row[5],
-                    'ts': row[6],
-                    'total_score': row[7],
+                    'proxy_address': row[0],
+                    'username': row[1],
+                    'side': row[2],
+                    'outcome': row[3],
+                    'size': row[4],
+                    'notional': row[5],
+                    'price': row[6],
+                    'ts': row[7],
+                    'total_score': row[8],
                 })
 
             return trades
@@ -315,10 +326,14 @@ class ConsensusDetector:
         by_trader = {}
 
         for t in trades:
-            username = t['username']
+            # Keyed on the address: username is empty for nearly every wallet,
+            # so keying on it collapsed all of them into a single bucket and
+            # made the consensus count meaningless.
+            username = t['proxy_address']
             if username not in by_trader:
                 by_trader[username] = {
-                    'username': username,
+                    'username': t['username'] or t['proxy_address'],
+                    'proxy_address': t['proxy_address'],
                     'total_score': t['total_score'],
                     'yes_volume': 0,
                     'no_volume': 0,
