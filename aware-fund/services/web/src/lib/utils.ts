@@ -33,11 +33,40 @@ export function formatPercent(value: unknown, maximumFractionDigits = 1): string
   return `${sign}${num.toFixed(maximumFractionDigits)}%`
 }
 
+/**
+ * Parse a timestamp coming from the API.
+ *
+ * The API stamps UTC, but a bare ISO-8601 string with no offset is parsed by
+ * JavaScript as *local* time, which silently shifts every reading by the
+ * viewer's own offset — in Madrid that made a trade from a minute ago read as
+ * "2h ago". Anything without a zone marker is treated as UTC, which is what
+ * the backend means.
+ */
+export function parseApiDate(
+  input: string | number | Date | null | undefined
+): Date | null {
+  if (input === null || input === undefined || input === '') return null
+  if (input instanceof Date) return Number.isNaN(input.getTime()) ? null : input
+  if (typeof input === 'number') return new Date(input)
+
+  // Only a datetime is ambiguous. A date-only string is already parsed as UTC
+  // by the engine, and appending Z to it would make it unparseable.
+  const hasTime = /\d{2}:\d{2}/.test(input)
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(input)
+  const date = new Date(hasTime && !hasZone ? `${input}Z` : input)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+/** parseApiDate for formatting call sites: always returns a Date. */
+export function apiDate(input: string | number | Date): Date {
+  return parseApiDate(input) ?? new Date(input)
+}
+
 export function getTimeAgo(input: string | number | Date | null | undefined): string {
   if (!input) return 'Unknown'
 
-  const date = input instanceof Date ? input : new Date(input)
-  if (Number.isNaN(date.getTime())) return 'Unknown'
+  const date = parseApiDate(input)
+  if (!date) return 'Unknown'
 
   const diffMs = Date.now() - date.getTime()
   const diffSec = Math.max(0, Math.floor(diffMs / 1000))

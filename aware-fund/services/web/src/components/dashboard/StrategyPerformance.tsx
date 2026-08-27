@@ -12,6 +12,7 @@ import {
 } from 'recharts'
 import { LineChart as LineChartIcon } from 'lucide-react'
 import { usePnlHistory } from '@/lib/hooks'
+import { apiDate } from '@/lib/utils'
 
 /**
  * Categorical hues, assigned in fixed order and never cycled, so a strategy
@@ -33,7 +34,7 @@ function money(v: number): string {
 }
 
 function timeLabel(iso: string): string {
-  const d = new Date(iso)
+  const d = apiDate(iso)
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -142,7 +143,7 @@ export function StrategyPerformance() {
                       borderRadius: 8,
                       fontSize: 12,
                     }}
-                    labelFormatter={(v) => new Date(v as string).toLocaleString()}
+                    labelFormatter={(v) => apiDate(v as string).toLocaleString()}
                     formatter={(value, name) => [
                       `$${Number(value).toLocaleString(undefined, {
                         maximumFractionDigits: 2,

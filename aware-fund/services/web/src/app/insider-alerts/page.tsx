@@ -20,7 +20,7 @@ import {
   ExternalLink,
   Activity,
 } from 'lucide-react'
-import { cn, formatNumber, formatCurrency } from '@/lib/utils'
+import { apiDate, cn, formatCurrency, formatNumber } from '@/lib/utils'
 import { api, InsiderAlert, InsiderAlertsResponse, EdgeDecayAlert, EdgeDecayResponse } from '@/lib/api'
 import { EdgeDecayCard } from '@/components/alerts/EdgeDecayCard'
 
@@ -441,13 +441,13 @@ export default function InsiderAlertsPage() {
                   <div className="text-center p-3 bg-slate-800/30 rounded-lg">
                     <Clock className="h-4 w-4 text-slate-400 mx-auto mb-1" />
                     <p className="text-lg font-bold text-white">
-                      {new Date(alert.detected_at).toLocaleTimeString([], {
+                      {apiDate(alert.detected_at).toLocaleTimeString([], {
                         hour: '2-digit',
                         minute: '2-digit',
                       })}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {new Date(alert.detected_at).toLocaleDateString()}
+                      {apiDate(alert.detected_at).toLocaleDateString()}
                     </p>
                   </div>
                 </div>

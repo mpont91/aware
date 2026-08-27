@@ -25,16 +25,49 @@ Environment Variables:
 import os
 import sys
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import date, datetime, timezone
+from typing import Annotated, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, PlainSerializer
 import uvicorn
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Timestamps
+# ─────────────────────────────────────────────────────────────────────────────
+# ClickHouse DateTime64 columns here carry no timezone, so the driver hands
+# back naive datetimes that are in fact UTC. Serialized as-is they lose that
+# fact, and any client parsing ISO-8601 without an offset applies its OWN local
+# zone: a trade from a minute ago reads as an hour or two old, off by exactly
+# the viewer's UTC offset. Everything leaving this API is stamped UTC instead.
+
+
+def _as_utc(value):
+    """Attach UTC to a naive datetime. Dates and aware values pass through."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def utc_iso(value) -> Optional[str]:
+    """ISO-8601 with an explicit offset, or None. Accepts dates and datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, (datetime, date)):
+        return _as_utc(value).isoformat()
+    return str(value)
+
+
+# Same guarantee for datetime fields declared on response models.
+UtcDatetime = Annotated[
+    datetime,
+    PlainSerializer(lambda d: _as_utc(d).isoformat(), return_type=str, when_used='json'),
+]
+
 
 import clickhouse_connect
 
@@ -173,8 +206,8 @@ class TraderProfile(BaseModel):
     total_trades: int
     unique_markets: int
     days_active: int
-    first_trade_at: Optional[datetime]
-    last_trade_at: Optional[datetime]
+    first_trade_at: Optional[UtcDatetime]
+    last_trade_at: Optional[UtcDatetime]
 
 
 class IndexComposition(BaseModel):
@@ -192,7 +225,7 @@ class PSIIndex(BaseModel):
     trader_count: int
     total_weight: float
     composition: list[IndexComposition]
-    calculated_at: datetime
+    calculated_at: UtcDatetime
 
 
 class HealthResponse(BaseModel):
@@ -200,7 +233,7 @@ class HealthResponse(BaseModel):
     database: str
     trade_count: int
     trader_count: int
-    last_score_update: Optional[datetime]
+    last_score_update: Optional[UtcDatetime]
 
 
 class StatsResponse(BaseModel):
@@ -217,7 +250,7 @@ class MonitoringResponse(BaseModel):
     trades_last_hour: int
     trades_last_24h: int
     traders_last_24h: int
-    latest_trade_at: Optional[datetime]
+    latest_trade_at: Optional[UtcDatetime]
     ingestion_lag_seconds: int
     markets_active: int
     avg_trades_per_hour: float
@@ -229,7 +262,7 @@ class MonitoringResponse(BaseModel):
     traders_with_pnl: int
     traders_with_sharpe: int
     resolutions_tracked: int
-    last_scoring_at: Optional[datetime]
+    last_scoring_at: Optional[UtcDatetime]
 
 
 class DailyStats(BaseModel):
@@ -244,12 +277,12 @@ class DataFreshness(BaseModel):
     """Data freshness indicators for UI display"""
     status: str  # fresh, stale, outdated
     status_emoji: str  # 🟢, 🟡, 🔴
-    latest_trade_at: Optional[datetime]
+    latest_trade_at: Optional[UtcDatetime]
     latest_trade_age_seconds: int
     latest_trade_age_human: str  # "2 minutes ago"
-    last_scoring_at: Optional[datetime]
+    last_scoring_at: Optional[UtcDatetime]
     last_scoring_age_human: str
-    last_pnl_at: Optional[datetime]
+    last_pnl_at: Optional[UtcDatetime]
     last_pnl_age_human: str
     data_coverage_days: int
     recommendation: str  # For users: "Data is current" or "Scores may be outdated"
@@ -575,7 +608,7 @@ async def get_daily_stats(days: int = Query(default=7, ge=1, le=30)):
         stats = []
         for row in result.result_rows:
             stats.append(DailyStats(
-                date=row[0].isoformat() if row[0] else '',
+                date=utc_iso(row[0]) if row[0] else '',
                 trades=row[1],
                 traders=row[2],
                 markets=row[3],
@@ -851,7 +884,7 @@ async def get_trader_activity(
         for d, daily in curve_rows:
             running += float(daily or 0)
             pnl_curve.append({
-                'date': d.isoformat(),
+                'date': utc_iso(d),
                 'realized_pnl': round(float(daily or 0), 2),
                 'cumulative_pnl': round(running, 2),
             })
@@ -957,7 +990,7 @@ async def get_trader_activity(
                 'avg_entry_price': round(entry, 4),
                 'current_price': round(mark[0], 4) if mark else None,
                 'unrealized_pnl': round(mark[0] * shares - cost, 2) if mark else None,
-                'priced_at': mark[1].isoformat() if mark else None,
+                'priced_at': utc_iso(mark[1]) if mark else None,
             })
 
         # ── Recent trades ───────────────────────────────────────────────────
@@ -970,7 +1003,7 @@ async def get_trader_activity(
         """, parameters=params).result_rows
 
         recent_trades = [{
-            'ts': r[0].isoformat(),
+            'ts': utc_iso(r[0]),
             'market_slug': r[1],
             'title': r[2] or r[1],
             'outcome': r[3],
@@ -1492,7 +1525,7 @@ async def get_market_consensus(market_slug: str, hours: int = Query(default=48, 
                 'direction': direction,
                 'volume': round(notional, 2),
                 'trade_count': row[5],
-                'last_trade': row[6].isoformat() if row[6] else None
+                'last_trade': utc_iso(row[6]) if row[6] else None
             })
 
         total_volume = yes_volume + no_volume
@@ -1783,7 +1816,7 @@ async def get_recent_activity(
         trades = []
         for row in result.result_rows:
             trades.append({
-                'timestamp': row[0].isoformat() if row[0] else None,
+                'timestamp': utc_iso(row[0]) if row[0] else None,
                 'username': row[1],
                 # username is almost always empty; the pseudonym is what
                 # Polymarket actually shows for these accounts.
@@ -1828,25 +1861,30 @@ class FundNAV(BaseModel):
     realized_pnl: float
     total_return: float
     open_positions: int
-    last_updated: Optional[datetime]
+    last_updated: Optional[UtcDatetime]
 
 
 class FundPosition(BaseModel):
     """A position held by the fund"""
     token_id: str
     market_slug: str
+    title: str = ''
     outcome: str
     shares: float
+    cost_usd: float
     avg_entry_price: float
-    current_price: float
-    current_value: float
-    unrealized_pnl: float
-    unrealized_pnl_pct: float
+    # None when the token has no recent print. A position with no current price
+    # cannot be valued, and guessing one would put invented money on the screen.
+    current_price: Optional[float] = None
+    current_value: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    unrealized_pnl_pct: Optional[float] = None
+    priced_at: Optional[str] = None
 
 
 class FundTrade(BaseModel):
     """A trade executed by the fund"""
-    timestamp: datetime
+    timestamp: UtcDatetime
     source_trader: str
     market_slug: str
     outcome: str
@@ -1871,43 +1909,94 @@ class FundPerformance(BaseModel):
 
 
 @app.get("/api/fund/positions", response_model=list[FundPosition])
-async def get_fund_positions(fund_id: str = Query(default="psi-10-main")):
+async def get_fund_positions(fund_id: str = Query(default="PSI-10")):
     """
-    Get current positions held by the fund.
+    Positions the fund still holds.
+
+    Built from aware_fund_executions rather than aware_fund_positions: nothing
+    writes to that table, so it reported no positions for every fund while the
+    funds were plainly trading. Buys are netted against sells, markets that have
+    resolved are dropped, and what is left is marked to the last print on the
+    token.
     """
     try:
         client = get_clickhouse_client()
 
-        query = """
-        SELECT
-            token_id,
-            market_slug,
-            outcome,
-            shares,
-            avg_entry_price,
-            current_price,
-            current_value,
-            unrealized_pnl,
-            unrealized_pnl_pct
-        FROM polybot.v_fund_positions_valued
-        WHERE fund_id = %(fund_id)s
-        ORDER BY current_value DESC
-        """
+        rows = client.query("""
+            WITH netted AS (
+                SELECT
+                    token_id,
+                    any(market_slug) AS market_slug,
+                    any(outcome) AS outcome,
+                    sumIf(toFloat64(fund_shares), signal_type = 'BUY')
+                        - sumIf(toFloat64(fund_shares), signal_type = 'SELL') AS shares,
+                    sumIf(toFloat64(fund_shares) * toFloat64(execution_price), signal_type = 'BUY')
+                        - sumIf(toFloat64(fund_shares) * toFloat64(execution_price), signal_type = 'SELL') AS cost_usd
+                FROM polybot.aware_fund_executions
+                WHERE upper(fund_id) = upper(%(fund_id)s)
+                GROUP BY token_id
+            )
+            SELECT
+                n.token_id,
+                n.market_slug,
+                n.outcome,
+                n.shares,
+                n.cost_usd
+            FROM netted n
+            WHERE n.shares > 0.01
+              AND n.market_slug NOT IN (
+                  SELECT market_slug
+                  FROM (SELECT * FROM polybot.aware_market_resolutions FINAL)
+                  WHERE is_resolved = 1
+              )
+            ORDER BY n.cost_usd DESC
+        """, parameters={'fund_id': fund_id}).result_rows
 
-        result = client.query(query, parameters={'fund_id': fund_id})
+        if not rows:
+            return []
+
+        tokens = tuple({r[0] for r in rows})
+        mark_rows = client.query("""
+            SELECT token_id, argMax(price, ts) AS last_price, max(ts) AS last_ts,
+                   argMax(title, ts) AS title
+            FROM polybot.aware_global_trades
+            WHERE token_id IN %(tokens)s
+              AND ts >= now() - INTERVAL %(hours)s HOUR
+            GROUP BY token_id
+        """, parameters={'tokens': tokens, 'hours': TRADER_MARK_MAX_AGE_HOURS}).result_rows
+        marks = {r[0]: (float(r[1]), r[2], r[3]) for r in mark_rows}
+
+        # Titles for the unpriced ones too, so the row is still readable.
+        title_rows = client.query("""
+            SELECT token_id, argMax(title, ts)
+            FROM polybot.aware_global_trades
+            WHERE token_id IN %(tokens)s
+            GROUP BY token_id
+        """, parameters={'tokens': tokens}).result_rows
+        titles = {r[0]: r[1] for r in title_rows}
 
         positions = []
-        for row in result.result_rows:
+        for token_id, market_slug, outcome, shares, cost_usd in rows:
+            shares = float(shares)
+            cost_usd = float(cost_usd)
+            mark = marks.get(token_id)
+            value = mark[0] * shares if mark else None
             positions.append(FundPosition(
-                token_id=row[0],
-                market_slug=row[1],
-                outcome=row[2],
-                shares=float(row[3]),
-                avg_entry_price=float(row[4]),
-                current_price=float(row[5]),
-                current_value=float(row[6]),
-                unrealized_pnl=float(row[7]),
-                unrealized_pnl_pct=float(row[8])
+                token_id=token_id,
+                market_slug=market_slug,
+                title=titles.get(token_id) or market_slug,
+                outcome=outcome,
+                shares=round(shares, 2),
+                cost_usd=round(cost_usd, 2),
+                avg_entry_price=round(cost_usd / shares, 4) if shares else 0.0,
+                current_price=round(mark[0], 4) if mark else None,
+                current_value=round(value, 2) if value is not None else None,
+                unrealized_pnl=round(value - cost_usd, 2) if value is not None else None,
+                unrealized_pnl_pct=(
+                    round(100 * (value - cost_usd) / cost_usd, 2)
+                    if value is not None and cost_usd else None
+                ),
+                priced_at=utc_iso(mark[1]) if mark else None,
             ))
 
         return positions
@@ -2073,7 +2162,7 @@ async def get_fund_index(index_type: str = Query(default="PSI-10")):
                 'smart_money_score': float(row[4]),
                 'sharpe_ratio': float(row[5]),
                 'strategy_type': row[6],
-                'rebalanced_at': row[7].isoformat() if row[7] else None
+                'rebalanced_at': utc_iso(row[7]) if row[7] else None
             })
 
         return {
@@ -2113,8 +2202,8 @@ class FundExecution(BaseModel):
     trader_shares: float
     fund_shares: float
     execution_price: float
-    detected_at: datetime
-    executed_at: datetime
+    detected_at: UtcDatetime
+    executed_at: UtcDatetime
 
 
 @app.get("/api/fund/list", response_model=list[FundInfo])
@@ -2273,7 +2362,7 @@ class InsiderAlert(BaseModel):
     direction: str
     total_volume_usd: float
     num_traders: int
-    detected_at: datetime
+    detected_at: UtcDatetime
     traders_involved: list[str]
 
 
@@ -2441,7 +2530,7 @@ class MLTraderEnrichment(BaseModel):
     is_anomaly: bool
     anomaly_score: float
     anomaly_type: str
-    updated_at: Optional[datetime]
+    updated_at: Optional[UtcDatetime]
 
 
 class MLAnomalyEntry(BaseModel):
@@ -2682,7 +2771,7 @@ async def get_pnl_summary():
             "unrealized_pnl": sum(s["unrealized_pnl"] for s in strategies),
             "roi_pct": (total_pnl / priced_cost * 100) if priced_cost else 0.0,
             "positions": sum(s["positions"] for s in strategies),
-            "calculated_at": rows[0][8].isoformat() if rows[0][8] else None,
+            "calculated_at": utc_iso(rows[0][8]),
             "strategies": strategies,
         }
 
@@ -2721,7 +2810,7 @@ async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
         points: dict = {}
         strategies: list = []
         for calculated_at, strategy, total_pnl in result.result_rows:
-            key = calculated_at.isoformat()
+            key = utc_iso(calculated_at)
             points.setdefault(key, {'timestamp': key})
             points[key][strategy] = round(float(total_pnl), 2)
             if strategy not in strategies:
@@ -2812,7 +2901,7 @@ async def get_fund_pnl(fund_id: str = Query(...)):
                     'unrealized_pnl': float(r[3]),
                     'total_pnl': float(r[4]),
                     'roi_pct': float(r[5]),
-                    'calculated_at': r[6].isoformat() if r[6] else None,
+                    'calculated_at': utc_iso(r[6]) if r[6] else None,
                 }
 
         result = client.query("""
@@ -2853,7 +2942,7 @@ async def get_fund_pnl(fund_id: str = Query(...)):
             'unrealized_pnl': float(r[3]),
             'total_pnl': float(r[4]),
             'roi_pct': float(r[5]),
-            'calculated_at': r[6].isoformat() if r[6] else None,
+            'calculated_at': utc_iso(r[6]) if r[6] else None,
         }
 
     except HTTPException:
@@ -2948,7 +3037,7 @@ async def get_funds_summary():
 @app.get("/api/fund/pnl-history")
 async def get_fund_pnl_history(
     fund_id: str = Query(...),
-    days: int = Query(default=7, ge=1, le=90),
+    days: int = Query(default=7, ge=1, le=365),
 ):
     """
     P&L over time for one fund, from the aware_fund_pnl snapshots.
@@ -2985,7 +3074,7 @@ async def get_fund_pnl_history(
             'point_count': len(rows),
             'points': [
                 {
-                    'timestamp': r[0].isoformat(),
+                    'timestamp': utc_iso(r[0]),
                     'total_pnl': round(float(r[1]), 2),
                     'realized_pnl': round(float(r[2]), 2),
                     'unrealized_pnl': round(float(r[3]), 2),
@@ -3002,7 +3091,7 @@ async def get_fund_pnl_history(
 
 
 @app.get("/api/fund/comparison")
-async def get_fund_comparison(days: int = Query(default=30, ge=1, le=90)):
+async def get_fund_comparison(days: int = Query(default=30, ge=1, le=365)):
     """
     ROI over time for every fund that has traded, for comparing them.
 
@@ -3033,7 +3122,7 @@ async def get_fund_comparison(days: int = Query(default=30, ge=1, le=90)):
         points: dict = {}
         funds: list = []
         for calculated_at, fund_id, roi in list(rows) + list(arb):
-            key = calculated_at.isoformat()
+            key = utc_iso(calculated_at)
             points.setdefault(key, {'timestamp': key})
             points[key][fund_id] = round(float(roi), 2)
             if fund_id not in funds:
@@ -3125,7 +3214,7 @@ async def get_ml_health():
             s_row = scores_result.result_rows[0]
             traders_scored = int(s_row[0]) if s_row[0] else 0
             model_version = s_row[1] if s_row[1] else 'rule_based_v1'
-            last_scoring_at = s_row[2].isoformat() if s_row[2] else None
+            last_scoring_at = utc_iso(s_row[2]) if s_row[2] else None
 
         # Determine scoring method from model version
         scoring_method = 'ml_ensemble' if 'ensemble' in model_version.lower() else 'rule_based'
@@ -3187,7 +3276,7 @@ class FundStatus(BaseModel):
     capital_usd: float
     position_count: int
     pending_signals: int
-    last_trade_at: Optional[datetime]
+    last_trade_at: Optional[UtcDatetime]
     daily_trades: int
     daily_notional_usd: float
     error_message: Optional[str]
@@ -3332,7 +3421,7 @@ class TraderEnrichmentFull(BaseModel):
     # Profile
     total_volume: float
     total_pnl: float
-    updated_at: Optional[datetime] = None
+    updated_at: Optional[UtcDatetime] = None
 
 
 class FeatureImportance(BaseModel):
@@ -3353,7 +3442,7 @@ class TierBoundary(BaseModel):
 class ModelInfo(BaseModel):
     """ML model metadata."""
     model_version: str
-    trained_at: Optional[datetime] = None
+    trained_at: Optional[UtcDatetime] = None
     n_traders_trained: int
     tier_accuracy: float
     sharpe_mae: float
@@ -3375,7 +3464,7 @@ class DriftStatus(BaseModel):
     n_drifted_features: int
     n_total_features: int
     drifted_features: list[dict]
-    last_checked: Optional[datetime] = None
+    last_checked: Optional[UtcDatetime] = None
     baseline_date: Optional[str] = None
     retrain_recommended: bool
 
@@ -3603,8 +3692,8 @@ async def get_training_history(
                 {
                     'run_id': row[0],
                     'model_version': row[1],
-                    'started_at': row[2].isoformat() if row[2] else None,
-                    'completed_at': row[3].isoformat() if row[3] else None,
+                    'started_at': utc_iso(row[2]) if row[2] else None,
+                    'completed_at': utc_iso(row[3]) if row[3] else None,
                     'duration_seconds': int(row[4]) if row[4] else 0,
                     'status': row[5],
                     'n_traders': int(row[6]) if row[6] else 0,

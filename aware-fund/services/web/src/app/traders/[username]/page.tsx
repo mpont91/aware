@@ -15,7 +15,7 @@ import {
   Shield,
   Loader2,
 } from 'lucide-react'
-import { cn, formatCurrency, formatNumber, getTimeAgo } from '@/lib/utils'
+import { apiDate, cn, formatCurrency, formatNumber, getTimeAgo } from '@/lib/utils'
 import {
   AreaChart,
   Area,
@@ -68,7 +68,7 @@ const prettyCategory = (c: string) =>
   c === 'UNCLASSIFIED' ? 'Unclassified' : c.charAt(0) + c.slice(1).toLowerCase()
 
 const shortDate = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  apiDate(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 
 const cents = (p: number) => `${(p * 100).toFixed(0)}¢`
 
@@ -368,7 +368,7 @@ function PnlCurveCard({
                     borderRadius: 8,
                     fontSize: 12,
                   }}
-                  labelFormatter={(v) => new Date(v as string).toLocaleDateString()}
+                  labelFormatter={(v) => apiDate(v as string).toLocaleDateString()}
                   formatter={(value, name) => [
                     formatCurrency(Number(value)),
                     name === 'cumulative_pnl' ? 'Cumulative' : 'That day',

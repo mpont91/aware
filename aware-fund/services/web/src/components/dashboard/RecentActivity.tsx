@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Activity, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react'
-import { cn, formatCurrency, getTimeAgo } from '@/lib/utils'
+import { apiDate, cn, formatCurrency, getTimeAgo } from '@/lib/utils'
 import { api, RecentTrade, traderName } from '@/lib/api'
 
 interface ActivityItem {
@@ -40,7 +40,7 @@ export function RecentActivity() {
           market: trade.title || trade.market_slug,
           outcome: trade.outcome || '',
           size: trade.notional || 0,
-          timestamp: new Date(trade.timestamp),
+          timestamp: apiDate(trade.timestamp),
         }))
 
         setActivities(items)

@@ -27,7 +27,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
-import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils'
+import { apiDate, cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils'
 import { FundPnlChart } from '@/components/fund/FundPnlChart'
 import { api, FundComparison } from '@/lib/api'
 
@@ -52,8 +52,8 @@ interface FundOverview {
   unrealized_pnl: number
   realized_pnl: number
   total_return: number
-  open_positions: number
-  num_traders: number
+  /** Every position attributed to the fund, open and settled. */
+  total_positions: number
   last_updated: string
   /** False before the strategy has filled anything for this fund. */
   has_data: boolean
@@ -65,13 +65,17 @@ interface FundOverview {
 interface FundPosition {
   token_id: string
   market_slug: string
+  title: string
   outcome: string
   shares: number
+  cost_usd: number
   avg_entry_price: number
-  current_price: number
-  current_value: number
-  unrealized_pnl: number
-  pnl_pct: number
+  /** null when the token has no recent print, so the position cannot be valued. */
+  current_price: number | null
+  current_value: number | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
+  priced_at: string | null
 }
 
 interface IndexConstituent {
@@ -124,7 +128,7 @@ function FundPageContent() {
     const days = comparisonTimeframe === '1W' ? 7
       : comparisonTimeframe === '1M' ? 30
       : comparisonTimeframe === '3M' ? 90
-      : 90
+      : 365
     let cancelled = false
     api
       .getFundComparison(days)
@@ -132,6 +136,26 @@ function FundPageContent() {
       .catch(() => { if (!cancelled) setComparison(null) })
     return () => { cancelled = true }
   }, [comparisonTimeframe])
+
+  // The span the chart actually covers, when it is shorter than the window
+  // asked for. Null once the data fills the range and the buttons do bite.
+  const comparisonSpan = (() => {
+    const pts = comparison?.points ?? []
+    if (pts.length < 2) return null
+    const first = apiDate(pts[0].timestamp)
+    const last = apiDate(pts[pts.length - 1].timestamp)
+    const days = (last.getTime() - first.getTime()) / 86_400_000
+    const requested = comparisonTimeframe === '1W' ? 7
+      : comparisonTimeframe === '1M' ? 30
+      : comparisonTimeframe === '3M' ? 90
+      : 365
+    if (days >= requested * 0.9) return null
+    if (days < 1) {
+      const hours = Math.max(1, Math.round(days * 24))
+      return `${hours}h of history`
+    }
+    return `${Math.round(days)} days of history`
+  })()
 
   // Get current fund config
   const currentFund = fundTypes.find(f => f.id === selectedFund) || fundTypes[0]
@@ -160,8 +184,7 @@ function FundPageContent() {
             unrealized_pnl: p.unrealized_pnl,
             realized_pnl: p.realized_pnl,
             total_return: p.roi_pct,
-            open_positions: p.positions,
-            num_traders: 0,
+            total_positions: p.positions,
             last_updated: p.calculated_at || new Date().toISOString(),
             has_data: p.has_data,
             apportioned: p.apportioned,
@@ -349,7 +372,7 @@ function FundPageContent() {
                       <p className="text-slate-500 text-sm mt-1">
                         Invested: {formatCurrency(overview.capital)}
                         {' \u00b7 '}
-                        {overview.open_positions} position{overview.open_positions === 1 ? '' : 's'}
+                        {overview.total_positions} position{overview.total_positions === 1 ? '' : 's'}
                       </p>
                       {overview.apportioned && (
                         <p
@@ -443,7 +466,7 @@ function FundPageContent() {
                     </defs>
                     <XAxis
                       dataKey="timestamp"
-                      tickFormatter={(v) => new Date(v as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      tickFormatter={(v) => apiDate(v as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                       axisLine={false}
                       tickLine={false}
                       tick={{ fill: '#64748b', fontSize: 12 }}
@@ -461,7 +484,7 @@ function FundPageContent() {
                         border: '1px solid #334155',
                         borderRadius: '8px'
                       }}
-                      labelFormatter={(v) => new Date(v as string).toLocaleString()}
+                      labelFormatter={(v) => apiDate(v as string).toLocaleString()}
                       formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
                     />
                     <Legend />
@@ -484,6 +507,15 @@ function FundPageContent() {
             )}
             <p className="text-xs text-slate-500 mt-3 text-center">
               Return on deployed capital. Funds that have not traded are omitted.
+              {comparisonSpan && (
+                <>
+                  {' '}
+                  Showing {comparisonSpan}
+                  {' \u2014 '}
+                  shorter than the selected range, so the window buttons will
+                  look identical until more history accumulates.
+                </>
+              )}
             </p>
           </div>
 
@@ -506,10 +538,18 @@ function FundPageContent() {
                 <div className="p-2 rounded-lg bg-green-500/10">
                   <Activity className="h-5 w-5 text-green-400" />
                 </div>
-                <span className="text-slate-400 text-sm">Open Positions</span>
+                <span
+                  className="text-slate-400 text-sm"
+                  title="Every position the fund has taken, including markets that have already resolved. The card below lists only the ones still open."
+                >
+                  Positions Taken
+                </span>
               </div>
               <p className="text-2xl font-bold text-white">
-                {overview.open_positions}
+                {overview.total_positions}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                {positions.length} still open
               </p>
             </div>
 
@@ -522,7 +562,7 @@ function FundPageContent() {
                   <span className="text-slate-400 text-sm">Tracked Traders</span>
                 </div>
                 <p className="text-2xl font-bold text-white">
-                  {overview.num_traders}
+                  {constituents.length}
                 </p>
               </div>
             )}
@@ -559,32 +599,54 @@ function FundPageContent() {
                   <Activity className="h-12 w-12 text-slate-600 mx-auto mb-4" />
                   <p className="text-slate-400">No open positions</p>
                   <p className="text-sm text-slate-500 mt-1">
-                    {isMirrorFund
-                      ? 'Fund will open positions when tracked traders trade'
-                      : 'Waiting for trading signals'}
+                    {overview.total_positions > 0
+                      ? 'Every market this fund traded has already resolved.'
+                      : isMirrorFund
+                        ? 'Fund will open positions when tracked traders trade'
+                        : 'Waiting for trading signals'}
                   </p>
                 </div>
               ) : (
                 <div className="divide-y divide-slate-800 max-h-96 overflow-y-auto">
                   {positions.map((pos) => (
                     <div key={pos.token_id} className="p-4 hover:bg-slate-800/30">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="text-white font-medium truncate max-w-[200px]">{pos.market_slug}</p>
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="min-w-0">
+                          <p className="text-white font-medium line-clamp-2">
+                            {pos.title || pos.market_slug}
+                          </p>
                           <p className="text-sm text-slate-400">
-                            {formatNumber(pos.shares, 2)} shares @ {pos.outcome}
+                            {formatNumber(pos.shares, 2)} shares @ {pos.outcome} ·
+                            entry {(pos.avg_entry_price * 100).toFixed(0)}¢
                           </p>
                         </div>
-                        <div className="text-right">
-                          <p className={cn(
-                            'font-semibold',
-                            pos.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
-                          )}>
-                            {formatCurrency(pos.unrealized_pnl)}
-                          </p>
-                          <p className="text-sm text-slate-500">
-                            {formatCurrency(pos.current_value)}
-                          </p>
+                        <div className="text-right shrink-0">
+                          {pos.unrealized_pnl === null ? (
+                            <>
+                              <p
+                                className="font-semibold text-slate-500"
+                                title="No trade on this token recently, so there is no price to value it at"
+                              >
+                                —
+                              </p>
+                              <p className="text-sm text-slate-500">
+                                {formatCurrency(pos.cost_usd)} cost
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <p className={cn(
+                                'font-semibold',
+                                pos.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                              )}>
+                                {pos.unrealized_pnl >= 0 ? '+' : '\u2212'}
+                                {formatCurrency(Math.abs(pos.unrealized_pnl))}
+                              </p>
+                              <p className="text-sm text-slate-500">
+                                {formatCurrency(pos.current_value ?? 0)} value
+                              </p>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>

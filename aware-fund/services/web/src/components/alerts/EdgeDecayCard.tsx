@@ -1,7 +1,7 @@
 'use client'
 
 import { TrendingDown, AlertTriangle, Eye, UserMinus, RefreshCw } from 'lucide-react'
-import { cn, formatPercent } from '@/lib/utils'
+import { apiDate, cn, formatPercent } from '@/lib/utils'
 import { EdgeDecayAlert } from '@/lib/api'
 
 interface EdgeDecayCardProps {
@@ -188,7 +188,7 @@ export function EdgeDecayCard({ alert }: EdgeDecayCardProps) {
       {/* Footer */}
       <div className="flex items-center justify-between pt-3 border-t border-slate-800/50 text-xs text-slate-500">
         <span>
-          Detected: {new Date(alert.detected_at).toLocaleDateString()}
+          Detected: {apiDate(alert.detected_at).toLocaleDateString()}
         </span>
         <span className="font-mono">
           {alert.proxy_address.slice(0, 6)}...{alert.proxy_address.slice(-4)}
