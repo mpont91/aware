@@ -993,6 +993,22 @@ class InsiderDetector:
         if not alerts:
             return 0
 
+        # Signal strength, which ALPHA-INSIDER filters on. The detector was
+        # not emitting it at all, so every signal took the consumer's 0.5
+        # default and fell under its 0.6 minimum — silently, at debug level,
+        # which is why the fund received alerts and never placed an order.
+        #
+        # Derived from severity, whose levels already say how actionable each
+        # one is: LOW is "interesting but not actionable" and MEDIUM "worth
+        # monitoring", so both stay under the bar; HIGH is "consider following"
+        # and CRITICAL "act quickly", so both clear it.
+        severity_strength = {
+            'LOW': 0.3,
+            'MEDIUM': 0.5,
+            'HIGH': 0.75,
+            'CRITICAL': 1.0,
+        }
+
         # Map signal type to alert_type expected by Java
         signal_to_alert_type = {
             'NEW_ACCOUNT_WHALE': 'INSIDER_DETECTED',
@@ -1020,6 +1036,7 @@ class InsiderDetector:
                 'signal_type': alert.signal_type.value,
                 'direction': alert.direction,
                 'confidence': alert.confidence,
+                'strength': severity_strength.get(alert.severity.value, 0.5),
                 'total_volume_usd': alert.total_volume_usd,
                 'num_traders': alert.num_traders,
                 'traders_involved': alert.traders_involved,
