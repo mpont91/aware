@@ -35,6 +35,13 @@ hft:
       max-open-positions: 50
       max-single-market-exposure-usd: 1000
       kill-switch-active: false
+      # Ceiling on a fund's total open cost, as a fraction of its capital. The
+      # limits above each bound one trade; this bounds their sum. Below 1.0 on
+      # purpose: open positions are counted from memory and a settled one stays
+      # there until its resolution is seen, so the figure runs high, and fills
+      # can land above the limit price within the slippage allowance. The funds
+      # currently sit under 10%, so this is a circuit breaker, not a constraint.
+      max-exposure-pct: 0.90
 
   # ═══════════════════════════════════════════════════════════════════════════
   # Multi-Fund Mode Configuration

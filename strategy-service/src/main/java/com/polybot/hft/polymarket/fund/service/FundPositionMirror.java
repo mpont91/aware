@@ -5,6 +5,7 @@ import com.polybot.hft.domain.OrderSide;
 import com.polybot.hft.polymarket.api.LimitOrderRequest;
 import com.polybot.hft.polymarket.api.OrderSubmissionResult;
 import com.polybot.hft.polymarket.fund.config.FundConfig;
+import com.polybot.hft.polymarket.fund.model.FundExposure;
 import com.polybot.hft.polymarket.fund.model.FundPosition;
 import com.polybot.hft.polymarket.fund.model.IndexConstituent;
 import com.polybot.hft.polymarket.fund.model.TraderSignal;
@@ -218,6 +219,15 @@ public class FundPositionMirror {
         if (newExposure.compareTo(config.riskLimits().maxSingleMarketExposureUsd()) > 0) {
             log.warn("Single market exposure ${} exceeds limit ${}",
                     newExposure, config.riskLimits().maxSingleMarketExposureUsd());
+            return false;
+        }
+
+        // Total exposure. The two checks above bound one market; nothing
+        // bounded their sum, so a fund could commit more than the capital it
+        // was allocated.
+        if (!FundExposure.isWithinCap(config.indexType(), positions,
+                targetShares.multiply(signal.price()), config.capitalUsd(),
+                config.riskLimits().maxExposurePct(), log)) {
             return false;
         }
 

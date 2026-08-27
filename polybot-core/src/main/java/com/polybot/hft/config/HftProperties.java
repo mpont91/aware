@@ -727,7 +727,8 @@ public record HftProperties(
         0.10,                         // maxDrawdownPct
         50,                           // maxOpenPositions
         BigDecimal.valueOf(1000),     // maxSingleMarketExposureUsd
-        false                         // killSwitchActive
+        false,                        // killSwitchActive
+        0.90                          // maxExposurePct
     );
   }
 
@@ -748,9 +749,19 @@ public record HftProperties(
       @NotNull @PositiveOrZero @jakarta.validation.constraints.DecimalMax("1.0") Double maxDrawdownPct,
       @NotNull @Min(1) Integer maxOpenPositions,
       @NotNull @PositiveOrZero BigDecimal maxSingleMarketExposureUsd,
-      @NotNull Boolean killSwitchActive
+      @NotNull Boolean killSwitchActive,
+      /**
+       * Ceiling on a fund's total open cost as a fraction of its capital.
+       * Existing per-position and per-market limits bound one trade; nothing
+       * bounded the sum, so a fund could commit past its whole allocation.
+       */
+      @NotNull @PositiveOrZero @jakarta.validation.constraints.DecimalMax("1.0")
+      Double maxExposurePct
   ) {
     public FundRiskLimits {
+      if (maxExposurePct == null) {
+        maxExposurePct = 0.90;
+      }
       if (maxDailyLossUsd == null) {
         maxDailyLossUsd = BigDecimal.valueOf(500);
       }

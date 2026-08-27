@@ -71,7 +71,9 @@ public record FundConfig(
             double maxDrawdownPct,
             int maxOpenPositions,
             BigDecimal maxSingleMarketExposureUsd,
-            boolean killSwitchActive
+            boolean killSwitchActive,
+            /** Ceiling on total open cost as a fraction of the fund's capital. */
+            double maxExposurePct
     ) {
         public static RiskLimits from(HftProperties.FundRiskLimits limits) {
             return new RiskLimits(
@@ -79,7 +81,8 @@ public record FundConfig(
                     limits.maxDrawdownPct(),
                     limits.maxOpenPositions(),
                     limits.maxSingleMarketExposureUsd(),
-                    limits.killSwitchActive()
+                    limits.killSwitchActive(),
+                    limits.maxExposurePct()
             );
         }
 
@@ -89,7 +92,8 @@ public record FundConfig(
                     0.10,
                     50,
                     BigDecimal.valueOf(1000),
-                    false
+                    false,
+                    0.90
             );
         }
     }

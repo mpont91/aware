@@ -6,6 +6,7 @@ import com.polybot.hft.polymarket.api.LimitOrderRequest;
 import com.polybot.hft.polymarket.api.OrderSubmissionResult;
 import com.polybot.hft.polymarket.fund.config.ActiveFundConfig;
 import com.polybot.hft.polymarket.fund.model.AlphaSignal;
+import com.polybot.hft.polymarket.fund.model.FundExposure;
 import com.polybot.hft.polymarket.fund.model.FundPosition;
 import com.polybot.hft.strategy.executor.ExecutorApiClient;
 import io.micrometer.core.instrument.Counter;
@@ -246,6 +247,15 @@ public abstract class ActiveFundExecutor {
             !positions.containsKey(signal.tokenId()) &&
             positions.size() >= config.riskLimits().maxOpenPositions()) {
             log.warn("Max open positions ({}) reached", config.riskLimits().maxOpenPositions());
+            return false;
+        }
+
+        // Total exposure. Every limit above bounds a single trade or a single
+        // day; none bounded what the fund has committed at once, so it could
+        // hold more than the capital it was allocated.
+        if (signal.action() == AlphaSignal.SignalAction.BUY &&
+            !FundExposure.isWithinCap(config.fundType(), positions, signalSize,
+                    config.capitalUsd(), config.riskLimits().maxExposurePct(), log)) {
             return false;
         }
 
