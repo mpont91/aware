@@ -109,14 +109,17 @@ public class IndexWeightProvider {
         // which falls back to weight-only sizing — small, not oversized.
         String sql = """
             SELECT
-                i.username,
-                i.proxy_address,
-                i.weight,
+                -- Every column aliased: with more than two joined tables
+                -- ClickHouse returns qualified names like "i.username", and the
+                -- JDBC driver looks them up unqualified.
+                i.username AS username,
+                i.proxy_address AS proxy_address,
+                i.weight AS weight,
                 row_number() OVER (ORDER BY i.weight DESC) AS rank_in_index,
                 COALESCE(k.estimated_capital_usd, 0) AS estimated_capital,
                 i.total_score AS smart_money_score,
                 COALESCE(i.strategy_type, 'UNKNOWN') AS strategy_type,
-                p.last_trade_at
+                p.last_trade_at AS last_trade_at
             FROM (SELECT * FROM polybot.aware_psi_index FINAL WHERE index_type = '%s') AS i
             LEFT JOIN (SELECT * FROM polybot.aware_trader_profiles FINAL) AS p ON i.proxy_address = p.proxy_address
             LEFT JOIN (SELECT * FROM polybot.aware_trader_capital FINAL) AS k ON i.proxy_address = k.proxy_address
