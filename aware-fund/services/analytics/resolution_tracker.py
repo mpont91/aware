@@ -75,7 +75,9 @@ class ResolutionTracker:
 
         # Step 2: Get already-tracked resolutions (to avoid re-fetching)
         already_resolved = self._get_already_resolved_ids()
-        pending_ids = set(cid for cid in condition_ids if cid not in already_resolved)
+        # A list, not a set: the recency order above is what decides which ones
+        # a capped run actually gets to.
+        pending_ids = [cid for cid in condition_ids if cid not in already_resolved]
         logger.info(f"{len(already_resolved)} already tracked, {len(pending_ids)} to check")
 
         if not pending_ids:
@@ -90,11 +92,23 @@ class ResolutionTracker:
         return stored
 
     def _get_traded_condition_ids(self) -> list[str]:
-        """Get unique condition IDs from our trades table"""
+        """
+        Unique condition IDs from our trades, most recently traded first.
+
+        The order matters because a run only gets through MAX_IDS_PER_RUN of
+        them. A market that has just stopped trading is both the likeliest to
+        have resolved and the likeliest to be one we still hold, so checking
+        those first is what keeps open positions from lingering. Sorting the
+        hex ids instead, as this did, spreads the work at random across a
+        backlog of thousands: GABAGOOL trades 5- and 15-minute markets, and its
+        settled positions were sitting unresolved for hours, counted as open.
+        """
         query = """
-        SELECT DISTINCT condition_id
+        SELECT condition_id
         FROM polybot.aware_global_trades_dedup
         WHERE condition_id != ''
+        GROUP BY condition_id
+        ORDER BY max(ts) DESC
         """
 
         try:
@@ -128,9 +142,13 @@ class ResolutionTracker:
     # response in memory at once — enough to OOM the host once the backlog
     # passed a few thousand. Whatever is left over is picked up next cycle,
     # and resolutions do not change once recorded, so nothing is lost.
-    MAX_IDS_PER_RUN = 2000
+    # Roughly 970 markets are newly traded every hour and the job runs hourly,
+    # so a ceiling near that only breaks even and never clears a backlog. Peak
+    # memory is per-batch since each is written before the next is fetched, so
+    # the ceiling costs wall time rather than memory: 6000 ids is 150 requests.
+    MAX_IDS_PER_RUN = 6000
 
-    def _fetch_and_store(self, wanted_condition_ids: set[str]) -> int:
+    def _fetch_and_store(self, wanted_condition_ids: list[str]) -> int:
         """
         Look up resolutions for the given condition IDs and store them as we go.
 
@@ -144,7 +162,7 @@ class ResolutionTracker:
         flat no matter how big the backlog is. Capped at MAX_IDS_PER_RUN;
         the rest is picked up on the next cycle.
         """
-        wanted = sorted(wanted_condition_ids)
+        wanted = list(wanted_condition_ids)
         total_pending = len(wanted)
         if total_pending > self.MAX_IDS_PER_RUN:
             wanted = wanted[:self.MAX_IDS_PER_RUN]

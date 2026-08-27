@@ -2912,11 +2912,19 @@ def _open_cost_by_fund(client) -> dict:
     """
     open_cost: dict = {}
 
+    # STALE positions are excluded throughout. A position the job could not
+    # mark has had no print for hours, which on a 5- or 15-minute market means
+    # it settled long ago and the resolution simply has not been recorded yet.
+    # Counting those as money in the market is what put $36k of exposure on a
+    # $15k fund. The P&L already leaves them out for the same reason, so the
+    # two figures agree.
+    #
     # ALPHA-ARB trades directly, so its open cost is the GABAGOOL side outright.
     gab = client.query("""
         SELECT sum(cost_usd)
         FROM polybot.aware_strategy_pnl_positions
         WHERE strategy = 'GABAGOOL' AND is_resolved = 0
+          AND mark_status != 'STALE'
           AND calculated_at = (
               SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
               WHERE strategy = 'GABAGOOL'
@@ -2931,6 +2939,7 @@ def _open_cost_by_fund(client) -> dict:
         SELECT token_id, cost_usd
         FROM polybot.aware_strategy_pnl_positions
         WHERE strategy = 'MIRROR' AND is_resolved = 0
+          AND mark_status != 'STALE'
           AND calculated_at = (
               SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
               WHERE strategy = 'MIRROR'
