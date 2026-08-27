@@ -29,19 +29,7 @@ import {
 } from 'recharts'
 import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils'
 import { FundPnlChart } from '@/components/fund/FundPnlChart'
-
-// Mock chart data for fund comparison (will be replaced with real data)
-const mockComparisonData = [
-  { date: 'Nov 1', 'PSI-10': 100, 'PSI-25': 100, 'PSI-CRYPTO': 100, 'ALPHA-ARB': 100 },
-  { date: 'Nov 8', 'PSI-10': 102, 'PSI-25': 101, 'PSI-CRYPTO': 104, 'ALPHA-ARB': 101 },
-  { date: 'Nov 15', 'PSI-10': 105, 'PSI-25': 103, 'PSI-CRYPTO': 108, 'ALPHA-ARB': 102 },
-  { date: 'Nov 22', 'PSI-10': 108, 'PSI-25': 105, 'PSI-CRYPTO': 112, 'ALPHA-ARB': 103 },
-  { date: 'Nov 29', 'PSI-10': 110, 'PSI-25': 107, 'PSI-CRYPTO': 115, 'ALPHA-ARB': 104 },
-  { date: 'Dec 6', 'PSI-10': 112, 'PSI-25': 108, 'PSI-CRYPTO': 118, 'ALPHA-ARB': 105 },
-  { date: 'Dec 13', 'PSI-10': 115, 'PSI-25': 110, 'PSI-CRYPTO': 120, 'ALPHA-ARB': 106 },
-  { date: 'Dec 20', 'PSI-10': 118, 'PSI-25': 112, 'PSI-CRYPTO': 122, 'ALPHA-ARB': 107 },
-  { date: 'Dec 27', 'PSI-10': 120, 'PSI-25': 114, 'PSI-CRYPTO': 125, 'ALPHA-ARB': 108 },
-]
+import { api, FundComparison } from '@/lib/api'
 
 // Fund colors for chart
 const fundColors: Record<string, string> = {
@@ -129,6 +117,21 @@ function FundPageContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [comparisonTimeframe, setComparisonTimeframe] = useState('1M')
+  const [comparison, setComparison] = useState<FundComparison | null>(null)
+
+  // Real ROI per fund over time, for the comparison chart below.
+  useEffect(() => {
+    const days = comparisonTimeframe === '1W' ? 7
+      : comparisonTimeframe === '1M' ? 30
+      : comparisonTimeframe === '3M' ? 90
+      : 90
+    let cancelled = false
+    api
+      .getFundComparison(days)
+      .then((c) => { if (!cancelled) setComparison(c) })
+      .catch(() => { if (!cancelled) setComparison(null) })
+    return () => { cancelled = true }
+  }, [comparisonTimeframe])
 
   // Get current fund config
   const currentFund = fundTypes.find(f => f.id === selectedFund) || fundTypes[0]
@@ -418,53 +421,69 @@ function FundPageContent() {
                 ))}
               </div>
             </div>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={mockComparisonData}>
-                  <defs>
-                    {Object.entries(fundColors).map(([fundId, color]) => (
-                      <linearGradient key={fundId} id={`color-${fundId}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={color} stopOpacity={0.2} />
-                        <stop offset="95%" stopColor={color} stopOpacity={0} />
-                      </linearGradient>
-                    ))}
-                  </defs>
-                  <XAxis
-                    dataKey="date"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#64748b', fontSize: 12 }}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: '#64748b', fontSize: 12 }}
-                    domain={[95, 130]}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#1e293b',
-                      border: '1px solid #334155',
-                      borderRadius: '8px'
-                    }}
-                  />
-                  <Legend />
-                  {['PSI-10', 'PSI-25', 'PSI-CRYPTO', 'ALPHA-ARB'].map((fundId) => (
-                    <Area
-                      key={fundId}
-                      type="monotone"
-                      dataKey={fundId}
-                      stroke={fundColors[fundId]}
-                      strokeWidth={selectedFund === fundId ? 3 : 1.5}
-                      fill={`url(#color-${fundId})`}
-                      opacity={selectedFund === fundId ? 1 : 0.5}
+            {!comparison || comparison.points.length < 2 ? (
+              <div className="h-72 flex flex-col items-center justify-center text-center">
+                <p className="text-sm text-slate-400">Not enough history yet</p>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                  A point is recorded each time the analytics pipeline runs. The
+                  comparison appears once there are at least two.
+                </p>
+              </div>
+            ) : (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={comparison.points}>
+                    <defs>
+                      {comparison.funds.map((fundId) => (
+                        <linearGradient key={fundId} id={`color-${fundId}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={fundColors[fundId] || '#64748b'} stopOpacity={0.2} />
+                          <stop offset="95%" stopColor={fundColors[fundId] || '#64748b'} stopOpacity={0} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={(v) => new Date(v as string).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#64748b', fontSize: 12 }}
+                      minTickGap={40}
                     />
-                  ))}
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: '#64748b', fontSize: 12 }}
+                      tickFormatter={(v) => `${v}%`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1e293b',
+                        border: '1px solid #334155',
+                        borderRadius: '8px'
+                      }}
+                      labelFormatter={(v) => new Date(v as string).toLocaleString()}
+                      formatter={(value, name) => [`${Number(value).toFixed(1)}%`, name]}
+                    />
+                    <Legend />
+                    {comparison.funds.map((fundId) => (
+                      <Area
+                        key={fundId}
+                        type="monotone"
+                        dataKey={fundId}
+                        stroke={fundColors[fundId] || '#64748b'}
+                        strokeWidth={selectedFund === fundId ? 3 : 1.5}
+                        fill={`url(#color-${fundId})`}
+                        opacity={selectedFund === fundId ? 1 : 0.5}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
             <p className="text-xs text-slate-500 mt-3 text-center">
-              Normalized performance (base = 100). Real data will populate as trades execute.
+              Return on deployed capital. Funds that have not traded are omitted.
             </p>
           </div>
 

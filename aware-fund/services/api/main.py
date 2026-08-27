@@ -2808,6 +2808,58 @@ async def get_fund_pnl_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/fund/comparison")
+async def get_fund_comparison(days: int = Query(default=30, ge=1, le=90)):
+    """
+    ROI over time for every fund that has traded, for comparing them.
+
+    ROI rather than dollars: the funds are allocated different amounts and
+    deploy different volumes, so absolute P&L would just rank them by size.
+    Funds with no activity are omitted rather than drawn as a flat line, which
+    would read as "traded and made nothing".
+    """
+    try:
+        client = get_clickhouse_client()
+
+        rows = client.query("""
+            SELECT calculated_at, fund_id, roi_pct
+            FROM polybot.aware_fund_pnl
+            WHERE calculated_at >= now() - INTERVAL %(days)s DAY
+            ORDER BY calculated_at
+        """, parameters={'days': days}).result_rows
+
+        # ALPHA-ARB trades directly, so its series lives under the strategy.
+        arb = client.query("""
+            SELECT calculated_at, 'ALPHA-ARB', roi_pct
+            FROM polybot.aware_strategy_pnl
+            WHERE strategy = 'GABAGOOL'
+              AND calculated_at >= now() - INTERVAL %(days)s DAY
+            ORDER BY calculated_at
+        """, parameters={'days': days}).result_rows
+
+        points: dict = {}
+        funds: list = []
+        for calculated_at, fund_id, roi in list(rows) + list(arb):
+            key = calculated_at.isoformat()
+            points.setdefault(key, {'timestamp': key})
+            points[key][fund_id] = round(float(roi), 2)
+            if fund_id not in funds:
+                funds.append(fund_id)
+
+        return {
+            'days': days,
+            'funds': sorted(funds),
+            'point_count': len(points),
+            'points': sorted(points.values(), key=lambda p: p['timestamp']),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get fund comparison: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ml/health")
 async def get_ml_health():
     """

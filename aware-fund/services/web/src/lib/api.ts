@@ -308,6 +308,13 @@ export interface FundPnlHistory {
   }>
 }
 
+export interface FundComparison {
+  days: number
+  funds: string[]
+  point_count: number
+  points: Array<Record<string, number | string>>
+}
+
 export interface DataFreshness {
   status: 'fresh' | 'stale' | 'outdated' | string
   status_emoji: string
@@ -467,6 +474,10 @@ export const api = {
 
   async getFundPnlHistory(fundId: string, days = 30): Promise<FundPnlHistory> {
     return fetchJson<FundPnlHistory>(`/api/fund/pnl-history${qp({ fund_id: fundId, days })}`)
+  },
+
+  async getFundComparison(days = 30): Promise<FundComparison> {
+    return fetchJson<FundComparison>(`/api/fund/comparison${qp({ days })}`)
   },
 
   async getFundsSummary(): Promise<FundsSummary> {
