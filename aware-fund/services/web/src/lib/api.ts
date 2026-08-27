@@ -196,19 +196,6 @@ export interface UserHolding {
   nav_per_share: number
 }
 
-export interface NAVDataPoint {
-  timestamp: string
-  nav_per_share: number
-  total_aum: number
-  daily_return: number
-}
-
-export interface NAVHistoryResponse {
-  fund_type: string
-  days: number
-  data_points: NAVDataPoint[]
-}
-
 export interface MLHealthResponse {
   status: 'healthy' | 'degraded' | 'unhealthy' | string
   model_version: string
@@ -624,61 +611,6 @@ export const api = {
 
   async getRecentActivity(minScore = 50, limit = 20): Promise<RecentActivityResponse> {
     return fetchJson<RecentActivityResponse>(`/api/activity/recent${qp({ min_score: minScore, limit })}`)
-  },
-
-  async getFunds(): Promise<{ funds: FundInfo[] }> {
-    const [catalogRaw, activeMetricsRaw] = await Promise.allSettled([
-      fetchJson<Array<Record<string, unknown>>>('/api/fund/list'),
-      fetchJson<Array<Record<string, unknown>>>('/api/funds?status=active'),
-    ])
-
-    const catalog = catalogRaw.status === 'fulfilled' ? catalogRaw.value : []
-    const activeMetrics = activeMetricsRaw.status === 'fulfilled' ? activeMetricsRaw.value : []
-
-    const byId = new Map<string, FundInfo>()
-
-    catalog.forEach((entry) => {
-      const mapped = mapFundRecord(entry)
-      byId.set(mapped.fund_id, {
-        ...mapped,
-        name: mapped.fund_id,
-      })
-    })
-
-    activeMetrics.forEach((entry) => {
-      const mapped = mapFundRecord(entry)
-      const id = mapped.fund_id
-      const existing = byId.get(id)
-      byId.set(id, {
-        ...(existing || mapped),
-        ...mapped,
-        fund_id: id,
-        fund_type: existing?.fund_type || mapped.fund_type,
-        name: existing?.name || id,
-        is_active: true,
-      })
-    })
-
-    return {
-      funds: Array.from(byId.values()).sort((a, b) => b.total_aum - a.total_aum),
-    }
-  },
-
-  async getFundNAVHistory(fundId: string, days = 30): Promise<NAVHistoryResponse> {
-    const raw = await fetchJson<Record<string, unknown>>(`/api/fund/nav-history${qp({ fund_type: fundId, days })}`)
-
-    const dataPointsRaw = Array.isArray(raw.data_points) ? (raw.data_points as Array<Record<string, unknown>>) : []
-
-    return {
-      fund_type: String(raw.fund_type || fundId),
-      days: toNumber(raw.days, days),
-      data_points: dataPointsRaw.map((point) => ({
-        timestamp: String(point.timestamp || ''),
-        nav_per_share: toNumber(point.nav_per_share, 1),
-        total_aum: toNumber(point.total_aum, 0),
-        daily_return: toNumber(point.daily_return, 0),
-      })),
-    }
   },
 
   async getMLHealth(): Promise<MLHealthResponse> {

@@ -16,7 +16,7 @@ import { Loader2 } from 'lucide-react'
 import { cn, formatCurrency } from '@/lib/utils'
 import { api, FundPnlHistory } from '@/lib/api'
 
-interface NAVChartProps {
+interface FundPnlChartProps {
   fundId: string
   height?: number
   showControls?: boolean
@@ -30,12 +30,12 @@ const timeRanges = [
   { label: 'ALL', days: 365 },
 ]
 
-export function NAVChart({
+export function FundPnlChart({
   fundId,
   height = 300,
   showControls = true,
   className,
-}: NAVChartProps) {
+}: FundPnlChartProps) {
   const [data, setData] = useState<FundPnlHistory['points']>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

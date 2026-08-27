@@ -28,7 +28,7 @@ import {
   Legend,
 } from 'recharts'
 import { cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils'
-import { NAVChart } from '@/components/fund/NAVChart'
+import { FundPnlChart } from '@/components/fund/FundPnlChart'
 
 // Mock chart data for fund comparison (will be replaced with real data)
 const mockComparisonData = [
@@ -394,7 +394,7 @@ function FundPageContent() {
               <Activity className="w-5 h-5 text-aware-400" />
               P&L History
             </h3>
-            <NAVChart fundId={selectedFund} height={300} />
+            <FundPnlChart fundId={selectedFund} height={300} />
           </div>
 
           {/* Quick Fund Switcher Cards */}

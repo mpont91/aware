@@ -47,9 +47,9 @@ from slowapi.errors import RateLimitExceeded
 from auth import verify_api_key, optional_api_key, is_auth_enabled
 
 # Investment module (Custodial MVP)
-# invest_router (third-party deposits) is deliberately not registered:
-# that feature is a mock and is not exposed. See investments.py.
-from investments import funds_router
+# The investor layer (deposits, shares, NAV per share) is gone: this is not a
+# fund with outside money, and every figure it produced was an empty valuation.
+# Fund pages read /api/fund/summary and /api/fund/pnl instead.
 
 # Add analytics to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'analytics'))
@@ -124,9 +124,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-API-Key"],
 )
 
-# Fund information only. The investor-facing deposit/withdraw router is not
-# registered: it books transactions without verifying them on-chain.
-app.include_router(funds_router)
+
 
 
 # ============================================================================
@@ -1677,73 +1675,6 @@ class FundPerformance(BaseModel):
     sharpe_ratio: float
 
 
-@app.get("/api/fund/nav", response_model=FundNAV)
-async def get_fund_nav(fund_id: str = Query(default="PSI-10")):
-    """
-    Get current NAV (Net Asset Value) for a fund.
-
-    Returns the fund's current value, positions, and P&L.
-    Fund types: PSI-10, PSI-25, PSI-50, ALPHA-ARB, ALPHA-INSIDER, ALPHA-EDGE, ALPHA-CONSENSUS
-    """
-    try:
-        client = get_clickhouse_client()
-
-        # v_fund_nav_latest view uses fund_type column
-        query = """
-        SELECT
-            fund_type,
-            nav_per_share,
-            capital,
-            position_value,
-            total_fund_value,
-            total_pnl,
-            daily_return_pct,
-            num_positions,
-            last_updated
-        FROM polybot.v_fund_nav_latest
-        WHERE fund_type = %(fund_type)s
-        LIMIT 1
-        """
-
-        result = client.query(query, parameters={'fund_type': fund_id.upper()})
-
-        if not result.result_rows:
-            # Return default for new fund
-            return FundNAV(
-                fund_id=fund_id,
-                nav=10000.0,
-                capital=10000.0,
-                position_value=0.0,
-                unrealized_pnl=0.0,
-                realized_pnl=0.0,
-                total_return=0.0,
-                open_positions=0,
-                last_updated=None
-            )
-
-        row = result.result_rows[0]
-        # View columns: fund_type(0), nav_per_share(1), capital(2), position_value(3),
-        #               total_fund_value(4), total_pnl(5), daily_return_pct(6),
-        #               num_positions(7), last_updated(8)
-        return FundNAV(
-            fund_id=row[0],
-            nav=float(row[4]) if row[4] else 10000.0,  # total_fund_value
-            capital=float(row[2]) if row[2] else 0.0,
-            position_value=float(row[3]) if row[3] else 0.0,
-            unrealized_pnl=float(row[5]) if row[5] else 0.0,  # total_pnl
-            realized_pnl=0.0,  # Not tracked separately
-            total_return=float(row[6]) if row[6] else 0.0,  # daily_return_pct
-            open_positions=int(row[7]) if row[7] else 0,
-            last_updated=row[8]
-        )
-
-    except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get fund NAV: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/fund/positions", response_model=list[FundPosition])
@@ -3030,95 +2961,6 @@ class FundActivateResponse(BaseModel):
     message: str
 
 
-@app.get("/api/fund/status")
-async def get_fund_operational_status(fund_type: str = Query(default="PSI-10")):
-    """
-    Get operational status of a fund from the Java strategy service.
-
-    Returns real-time status including active positions, pending signals, etc.
-    """
-    try:
-        # Try to fetch from Java strategy-service
-        response = http_requests.get(
-            f"{STRATEGY_SERVICE_URL}/api/strategy/fund/status",
-            params={'fundType': fund_type},
-            timeout=5
-        )
-
-        if response.ok:
-            data = response.json()
-            return {
-                'fund_type': fund_type,
-                'source': 'strategy_service',
-                'status': data
-            }
-
-        # Fallback to database if service unavailable
-        return await _get_fund_status_from_db(fund_type)
-
-    except http_requests.exceptions.RequestException:
-        # Strategy service not available, return DB status
-        return await _get_fund_status_from_db(fund_type)
-    except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get fund status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _get_fund_status_from_db(fund_type: str) -> dict:
-    """Get fund status from database when strategy service is unavailable."""
-    try:
-        client = get_clickhouse_client()
-
-        # Get fund summary
-        result = client.query("""
-            SELECT
-                fund_type,
-                status,
-                total_aum,
-                nav_per_share,
-                num_depositors
-            FROM polybot.aware_fund_summary FINAL
-            WHERE fund_type = %(fund_type)s
-        """, parameters={'fund_type': fund_type})
-
-        if result.result_rows:
-            row = result.result_rows[0]
-            return {
-                'fund_type': row[0],
-                'source': 'database',
-                'status': {
-                    'is_active': row[1] == 'active',
-                    'total_aum': float(row[2]),
-                    'nav_per_share': float(row[3]),
-                    'num_depositors': int(row[4]),
-                    'strategy_service': 'unavailable'
-                }
-            }
-
-        return {
-            'fund_type': fund_type,
-            'source': 'database',
-            'status': {
-                'is_active': False,
-                'message': 'Fund not found'
-            }
-        }
-
-    except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get fund status from DB: {e}")
-        return {
-            'fund_type': fund_type,
-            'source': 'error',
-            'status': {'error': str(e)}
-        }
 
 
 # Not exposed: this dashboard is read-only and reachable without
@@ -3215,122 +3057,8 @@ async def pause_fund(fund_type: str = Query(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/fund/metrics")
-async def get_fund_metrics(fund_type: str = Query(default="PSI-10")):
-    """
-    Get Prometheus-style metrics for a fund.
-
-    Returns metrics suitable for monitoring dashboards.
-    """
-    try:
-        client = get_clickhouse_client()
-
-        # Get fund metrics from multiple sources
-        metrics = {}
-
-        # NAV metrics
-        nav_result = client.query("""
-            SELECT nav_per_share, total_fund_value, total_pnl, num_positions
-            FROM polybot.v_fund_nav_latest
-            WHERE fund_type = %(fund_type)s
-        """, parameters={'fund_type': fund_type})
-
-        if nav_result.result_rows:
-            row = nav_result.result_rows[0]
-            metrics['aware_fund_nav_per_share'] = float(row[0])
-            metrics['aware_fund_total_value_usd'] = float(row[1])
-            metrics['aware_fund_total_pnl_usd'] = float(row[2])
-            metrics['aware_fund_position_count'] = int(row[3])
-
-        # Trade metrics (24h)
-        trade_result = client.query("""
-            SELECT
-                count() as trade_count,
-                sum(notional_usd) as total_notional
-            FROM polybot.aware_fund_trades
-            WHERE fund_id = %(fund_type)s
-              AND ts >= now() - INTERVAL 24 HOUR
-        """, parameters={'fund_type': fund_type})
-
-        if trade_result.result_rows:
-            row = trade_result.result_rows[0]
-            metrics['aware_fund_trades_24h'] = int(row[0])
-            metrics['aware_fund_volume_24h_usd'] = float(row[1] or 0)
-
-        # Execution metrics
-        exec_result = client.query("""
-            SELECT count() as signal_count
-            FROM polybot.aware_fund_executions
-            WHERE fund_id = %(fund_type)s
-              AND executed_at >= now() - INTERVAL 24 HOUR
-        """, parameters={'fund_type': fund_type})
-
-        if exec_result.result_rows:
-            metrics['aware_fund_signals_24h'] = int(exec_result.result_rows[0][0])
-
-        return {
-            'fund_type': fund_type,
-            'timestamp': datetime.utcnow().isoformat(),
-            'metrics': metrics
-        }
-
-    except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get fund metrics: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/fund/nav-history")
-async def get_fund_nav_history(
-    fund_type: str = Query(default="PSI-10"),
-    days: int = Query(default=30, ge=1, le=365)
-):
-    """
-    Get NAV history for a fund.
-
-    Returns time series data for charting NAV over time.
-    """
-    try:
-        client = get_clickhouse_client()
-
-        result = client.query(f"""
-            SELECT
-                calculated_at,
-                nav_per_share,
-                total_fund_value,
-                total_pnl,
-                daily_return_pct
-            FROM polybot.aware_fund_nav
-            WHERE fund_type = %(fund_type)s
-              AND calculated_at >= now() - INTERVAL {days} DAY
-            ORDER BY calculated_at ASC
-        """, parameters={'fund_type': fund_type})
-
-        data_points = []
-        for row in result.result_rows:
-            data_points.append({
-                'timestamp': row[0].isoformat() if row[0] else None,
-                'nav_per_share': float(row[1]),
-                'total_aum': float(row[2]),
-                'daily_return': float(row[4]) if row[4] else 0
-            })
-
-        return {
-            'fund_type': fund_type,
-            'days': days,
-            'data_points': data_points
-        }
-
-    except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get NAV history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
