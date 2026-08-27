@@ -397,37 +397,6 @@ function FundPageContent() {
             <FundPnlChart fundId={selectedFund} height={300} />
           </div>
 
-          {/* Quick Fund Switcher Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {fundTypes.slice(0, 4).filter(f => f.id !== selectedFund).map((fund) => (
-              <button
-                key={fund.id}
-                onClick={() => setSelectedFund(fund.id)}
-                className={cn(
-                  'rounded-xl bg-slate-900/50 border p-4 text-left transition-all hover:shadow-lg',
-                  'border-slate-800 hover:border-slate-600'
-                )}
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <div
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: fundColors[fund.id] || '#64748b' }}
-                  />
-                  <span className="font-medium text-white text-sm">{fund.name}</span>
-                </div>
-                <p className="text-xs text-slate-500 line-clamp-1">{fund.description}</p>
-                <div className="mt-2 flex items-center justify-between">
-                  <span className={cn(
-                    'text-xs px-1.5 py-0.5 rounded',
-                    fund.type === 'MIRROR' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'
-                  )}>
-                    {fund.type}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-
           {/* Fund Performance Comparison Chart */}
           <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
             <div className="flex items-center justify-between mb-6">
