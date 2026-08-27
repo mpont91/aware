@@ -63,6 +63,12 @@ hft:
         max-position-pct: 0.10
         min-trade-usd: 10
 
+      PSI-POLITICS:
+        enabled: true
+        capital-pct: 10
+        max-position-pct: 0.10
+        min-trade-usd: 10
+
       PSI-SPORTS:
         enabled: true
         capital-pct: 5
@@ -90,7 +96,7 @@ hft:
 
       ALPHA-EDGE:
         enabled: true
-        capital-pct: 18
+        capital-pct: 8
         max-position-pct: 0.10
         min-trade-usd: 20
 

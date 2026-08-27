@@ -1,6 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import {
+  CONSENSUS_LOOKBACK_HOURS,
+  CONSENSUS_MIN_TRADERS,
+  CONSENSUS_MIN_VOLUME,
+} from '@/lib/consensus'
 import Link from 'next/link'
 import {
   Users,
@@ -53,17 +58,6 @@ const strengthConfig = {
   },
 }
 
-/**
- * Filter thresholds. The volume floor is set from the observed distribution:
- * among markets where three or more scored traders agree inside the window,
- * combined notional runs a median near $100 and tops out around $1.2k, so the
- * $5k default this page used to send excluded every market that has ever
- * existed here. $250 is roughly the upper quartile — the higher-conviction
- * clusters, without the floor being so high that nothing clears it.
- */
-const MIN_TRADERS = 3
-const MIN_VOLUME = 250
-const LOOKBACK_HOURS = 48
 
 export default function ConsensusPage() {
   const [signals, setSignals] = useState<Signal[]>([])
@@ -78,9 +72,9 @@ export default function ConsensusPage() {
         setIsLoading(true)
         setError(null)
         const response = await api.getConsensusSignals(
-          MIN_TRADERS,
-          MIN_VOLUME,
-          LOOKBACK_HOURS
+          CONSENSUS_MIN_TRADERS,
+          CONSENSUS_MIN_VOLUME,
+          CONSENSUS_LOOKBACK_HOURS
         )
 
         // Transform API response to our Signal format
@@ -126,8 +120,8 @@ export default function ConsensusPage() {
             Consensus Signals
           </h1>
           <p className="text-slate-400 mt-1">
-            Markets where at least {MIN_TRADERS} scored traders took the same
-            side in the last {LOOKBACK_HOURS}h, on ${MIN_VOLUME}+ of combined
+            Markets where at least {CONSENSUS_MIN_TRADERS} scored traders took the same
+            side in the last {CONSENSUS_LOOKBACK_HOURS}h, on ${CONSENSUS_MIN_VOLUME}+ of combined
             volume
           </p>
         </div>

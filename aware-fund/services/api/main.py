@@ -2879,9 +2879,13 @@ async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
 # strategy-service/src/main/resources/application-production.yaml. Duplicated
 # rather than read from the strategy service, which exposes no endpoint for it;
 # if the percentages change there, change them here too.
+# Mirrors the multi-fund allocation in strategy-service's application-*.yaml.
+# Keep the two in step: this is what the dashboard reports as allocated, and a
+# fund missing here is a fund the dashboard will not list at all.
 FUND_CAPITAL_PCT = {
-    'PSI-10': 15, 'PSI-25': 10, 'PSI-CRYPTO': 10, 'PSI-SPORTS': 5,
-    'PSI-ALPHA': 10, 'ALPHA-ARB': 15, 'ALPHA-INSIDER': 17, 'ALPHA-EDGE': 18,
+    'PSI-10': 15, 'PSI-25': 10, 'PSI-CRYPTO': 10, 'PSI-POLITICS': 10,
+    'PSI-SPORTS': 5, 'PSI-ALPHA': 10, 'ALPHA-ARB': 15, 'ALPHA-INSIDER': 17,
+    'ALPHA-EDGE': 8,
 }
 
 # Matches the descriptions in FundType.java.
@@ -2889,6 +2893,7 @@ FUND_DESCRIPTIONS = {
     'PSI-10': 'Mirrors the 10 highest-scoring traders',
     'PSI-25': 'Mirrors the top 25, more diversified',
     'PSI-CRYPTO': 'Mirrors the best traders in crypto markets',
+    'PSI-POLITICS': 'Mirrors the best traders in political markets',
     'PSI-SPORTS': 'Mirrors the best traders in sports markets',
     'PSI-ALPHA': 'Mirrors the highest alpha generators',
     'ALPHA-ARB': 'Complete-set arbitrage, trades directly',

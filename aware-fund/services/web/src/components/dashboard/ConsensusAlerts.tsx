@@ -1,6 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import {
+  CONSENSUS_LOOKBACK_HOURS,
+  CONSENSUS_MIN_TRADERS,
+  CONSENSUS_MIN_VOLUME,
+} from '@/lib/consensus'
 import Link from 'next/link'
 import { Users, ArrowRight, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -22,7 +27,11 @@ export function ConsensusAlerts() {
     // Same thresholds as the dedicated page, so both agree on what counts as
     // a signal instead of the dashboard showing more than the page behind it.
     api
-      .getConsensusSignals(3, 5000, 48)
+      .getConsensusSignals(
+        CONSENSUS_MIN_TRADERS,
+        CONSENSUS_MIN_VOLUME,
+        CONSENSUS_LOOKBACK_HOURS
+      )
       .then((res) => {
         if (!cancelled) setSignals(res.signals.slice(0, 3))
       })
