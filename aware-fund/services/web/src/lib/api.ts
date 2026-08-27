@@ -287,6 +287,28 @@ export interface PnlHistory {
   points: Array<Record<string, number | string>>
 }
 
+export interface FundSummaryEntry {
+  fund_id: string
+  category: 'MIRROR' | 'ACTIVE'
+  description: string
+  allocated_capital: number
+  has_data: boolean
+  apportioned: boolean
+  positions: number
+  invested: number
+  realized_pnl: number
+  unrealized_pnl: number
+  total_pnl: number
+  roi_pct: number
+}
+
+export interface FundsSummary {
+  total_capital: number
+  total_invested: number
+  total_pnl: number
+  funds: FundSummaryEntry[]
+}
+
 export interface DataFreshness {
   status: 'fresh' | 'stale' | 'outdated' | string
   status_emoji: string
@@ -442,6 +464,10 @@ export const api = {
 
   async getPnlSummary(): Promise<PnlSummary> {
     return fetchJson<PnlSummary>('/api/pnl/summary')
+  },
+
+  async getFundsSummary(): Promise<FundsSummary> {
+    return fetchJson<FundsSummary>('/api/fund/summary')
   },
 
   async getPnlHistory(days = 7): Promise<PnlHistory> {

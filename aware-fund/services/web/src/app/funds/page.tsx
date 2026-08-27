@@ -60,8 +60,22 @@ const fundMeta: Record<string, { icon: typeof Users; description: string; color:
   },
 }
 
+/** What a fund card shows: what it was given, and what it did with it. */
+interface FundCard {
+  fund_id: string
+  fund_type: 'MIRROR' | 'ACTIVE'
+  name: string
+  description: string
+  allocated_capital: number
+  invested: number
+  total_pnl: number
+  roi_pct: number
+  positions: number
+  has_data: boolean
+}
+
 export default function AllFundsPage() {
-  const [funds, setFunds] = useState<FundInfo[]>([])
+  const [funds, setFunds] = useState<FundCard[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filterType, setFilterType] = useState<'ALL' | 'MIRROR' | 'ACTIVE'>('ALL')
@@ -70,27 +84,21 @@ export default function AllFundsPage() {
   useEffect(() => {
     async function fetchFunds() {
       try {
-        const data = await api.getFunds()
-        // Handle both array response and {funds: [...]} response
-        const rawFunds = Array.isArray(data) ? data : (data?.funds || [])
-        // Map API response to expected FundInfo format
-        const fundsList = rawFunds.map((f: any) => ({
-          fund_id: f.fund_id || f.fund_type,
-          fund_type: f.fund_type?.startsWith('PSI') ? 'MIRROR' : 'ACTIVE',
-          name: f.name || f.fund_type,
-          description: f.description || '',
-          nav_per_share: parseFloat(f.nav_per_share) || 1,
-          total_aum: parseFloat(f.total_aum) || 0,
-          total_shares: f.total_shares || 0,
-          performance_1d: f.performance_1d || f.return_24h_pct || 0,
-          performance_7d: f.performance_7d || f.return_7d_pct || 0,
-          performance_30d: f.performance_30d || f.return_30d_pct || 0,
-          sharpe_ratio: f.sharpe_ratio || 0,
-          max_drawdown: f.max_drawdown || 0,
-          management_fee: f.management_fee || f.management_fee_pct || 0,
-          performance_fee: f.performance_fee || f.performance_fee_pct || 0,
-          inception_date: f.inception_date || '',
-          is_active: f.is_active ?? f.status === 'active',
+        // /api/fund/summary carries what each fund was allocated and what it
+        // actually traded. The older /api/funds reads aware_fund_summary, fed
+        // by the NAV calculator, which reports NAV 1.0 and AUM 0 for every fund.
+        const data = await api.getFundsSummary()
+        const fundsList = data.funds.map((f) => ({
+          fund_id: f.fund_id,
+          fund_type: f.category,
+          name: f.fund_id,
+          description: f.description,
+          allocated_capital: f.allocated_capital,
+          invested: f.invested,
+          total_pnl: f.total_pnl,
+          roi_pct: f.roi_pct,
+          positions: f.positions,
+          has_data: f.has_data,
         }))
         setFunds(fundsList)
       } catch (err) {
@@ -109,9 +117,9 @@ export default function AllFundsPage() {
     : (funds || []).filter(f => f.fund_type === filterType)
 
   // Calculate totals
-  const totalAUM = (funds || []).reduce((sum, f) => sum + (f.total_aum || 0), 0)
+  const totalInvested = (funds || []).reduce((sum, f) => sum + (f.invested || 0), 0)
   const avgPerformance = (funds?.length || 0) > 0
-    ? (funds || []).reduce((sum, f) => sum + (f.performance_30d || 0), 0) / funds.length
+    ? (funds || []).reduce((sum, f) => sum + (f.roi_pct || 0), 0) / funds.length
     : 0
 
   return (
@@ -167,8 +175,8 @@ export default function AllFundsPage() {
               <DollarSign className="w-5 h-5 text-green-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{formatCurrency(totalAUM)}</p>
-              <p className="text-sm text-slate-400">Total AUM</p>
+              <p className="text-2xl font-bold text-white">{formatCurrency(totalInvested)}</p>
+              <p className="text-sm text-slate-400">Total deployed</p>
             </div>
           </div>
         </div>
@@ -275,18 +283,18 @@ export default function AllFundsPage() {
                   {/* Performance Badge */}
                   <div className={cn(
                     'flex items-center gap-1 px-2 py-1 rounded-lg',
-                    fund.performance_30d >= 0 ? 'bg-green-500/20' : 'bg-red-500/20'
+                    fund.roi_pct >= 0 ? 'bg-green-500/20' : 'bg-red-500/20'
                   )}>
-                    {fund.performance_30d >= 0 ? (
+                    {fund.roi_pct >= 0 ? (
                       <TrendingUp className="w-4 h-4 text-green-400" />
                     ) : (
                       <TrendingDown className="w-4 h-4 text-red-400" />
                     )}
                     <span className={cn(
                       'text-sm font-medium',
-                      fund.performance_30d >= 0 ? 'text-green-400' : 'text-red-400'
+                      fund.roi_pct >= 0 ? 'text-green-400' : 'text-red-400'
                     )}>
-                      {fund.performance_30d >= 0 ? '+' : ''}{fund.performance_30d.toFixed(1)}%
+                      {fund.roi_pct >= 0 ? '+' : ''}{fund.roi_pct.toFixed(1)}%
                     </span>
                   </div>
                 </div>
@@ -299,39 +307,42 @@ export default function AllFundsPage() {
                 {/* Stats */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-xs text-slate-500">NAV</p>
-                    <p className="text-lg font-semibold text-white">
-                      {formatCurrency(fund.nav_per_share)}
+                    <p className="text-xs text-slate-500">Allocated</p>
+                    <p className="text-lg font-semibold text-white tabular-nums">
+                      {formatCurrency(fund.allocated_capital)}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">AUM</p>
-                    <p className="text-lg font-semibold text-white">
-                      {formatNumber(fund.total_aum)}
+                    <p className="text-xs text-slate-500">Deployed</p>
+                    <p className="text-lg font-semibold text-white tabular-nums">
+                      {fund.has_data ? formatCurrency(fund.invested) : '\u2014'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Sharpe</p>
+                    <p className="text-xs text-slate-500">P&amp;L</p>
                     <p className={cn(
-                      'text-lg font-semibold',
-                      fund.sharpe_ratio >= 1 ? 'text-green-400' :
-                      fund.sharpe_ratio >= 0 ? 'text-yellow-400' : 'text-red-400'
+                      'text-lg font-semibold tabular-nums',
+                      !fund.has_data ? 'text-slate-500'
+                        : fund.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'
                     )}>
-                      {fund.sharpe_ratio.toFixed(2)}
+                      {fund.has_data
+                        ? `${fund.total_pnl >= 0 ? '+' : '\u2212'}${formatCurrency(Math.abs(fund.total_pnl))}`
+                        : '\u2014'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Max DD</p>
-                    <p className="text-lg font-semibold text-red-400">
-                      {fund.max_drawdown.toFixed(1)}%
+                    <p className="text-xs text-slate-500">Positions</p>
+                    <p className="text-lg font-semibold text-white tabular-nums">
+                      {fund.has_data ? fund.positions : '\u2014'}
                     </p>
                   </div>
                 </div>
 
-                {/* Fees */}
-                <div className="mt-4 pt-4 border-t border-slate-700/50 flex justify-between text-xs text-slate-500">
-                  <span>Mgmt Fee: {fund.management_fee}%</span>
-                  <span>Perf Fee: {fund.performance_fee}%</span>
+                {/* Whether it has actually traded */}
+                <div className="mt-4 pt-4 border-t border-slate-700/50 text-xs text-slate-500">
+                  {fund.has_data
+                    ? `${fund.roi_pct >= 0 ? '+' : ''}${fund.roi_pct.toFixed(1)}% on deployed capital`
+                    : 'Has not traded yet'}
                 </div>
               </Link>
             )

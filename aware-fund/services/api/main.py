@@ -2621,6 +2621,34 @@ async def get_pnl_history(days: int = Query(default=7, ge=1, le=90)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Capital allocated to each fund, mirroring hft.multi-fund in
+# strategy-service/src/main/resources/application-production.yaml. Duplicated
+# rather than read from the strategy service, which exposes no endpoint for it;
+# if the percentages change there, change them here too.
+FUND_CAPITAL_PCT = {
+    'PSI-10': 15, 'PSI-25': 10, 'PSI-CRYPTO': 10, 'PSI-SPORTS': 5,
+    'PSI-ALPHA': 10, 'ALPHA-ARB': 15, 'ALPHA-INSIDER': 17, 'ALPHA-EDGE': 18,
+}
+
+# Matches the descriptions in FundType.java.
+FUND_DESCRIPTIONS = {
+    'PSI-10': 'Mirrors the 10 highest-scoring traders',
+    'PSI-25': 'Mirrors the top 25, more diversified',
+    'PSI-CRYPTO': 'Mirrors the best traders in crypto markets',
+    'PSI-SPORTS': 'Mirrors the best traders in sports markets',
+    'PSI-ALPHA': 'Mirrors the highest alpha generators',
+    'ALPHA-ARB': 'Complete-set arbitrage, trades directly',
+    'ALPHA-INSIDER': 'Follows unusual-activity signals',
+    'ALPHA-EDGE': 'Multi-strategy, depends on the ML models',
+}
+
+
+def _allocated_capital(fund_id: str) -> float:
+    """The simulated capital this fund is allowed to deploy."""
+    total = float(os.getenv('TOTAL_CAPITAL_USD', '100000'))
+    return total * FUND_CAPITAL_PCT.get(fund_id.upper(), 0) / 100
+
+
 @app.get("/api/fund/pnl")
 async def get_fund_pnl(fund_id: str = Query(...)):
     """
@@ -2653,6 +2681,7 @@ async def get_fund_pnl(fund_id: str = Query(...)):
                     'fund_id': fund,
                     'has_data': True,
                     'apportioned': False,
+                    'allocated_capital': _allocated_capital(fund),
                     'positions': int(r[0]),
                     'cost_usd': float(r[1]),
                     'realized_pnl': float(r[2]),
@@ -2678,6 +2707,7 @@ async def get_fund_pnl(fund_id: str = Query(...)):
                 'fund_id': fund,
                 'has_data': False,
                 'apportioned': True,
+                'allocated_capital': _allocated_capital(fund),
                 'positions': 0,
                 'cost_usd': 0.0,
                 'realized_pnl': 0.0,
@@ -2692,6 +2722,7 @@ async def get_fund_pnl(fund_id: str = Query(...)):
             'fund_id': fund,
             'has_data': True,
             'apportioned': True,
+            'allocated_capital': _allocated_capital(fund),
             'positions': int(r[0]),
             'cost_usd': float(r[1]),
             'realized_pnl': float(r[2]),
@@ -2705,6 +2736,88 @@ async def get_fund_pnl(fund_id: str = Query(...)):
         raise
     except Exception as e:
         logger.error(f"Failed to get fund P&L: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/fund/summary")
+async def get_funds_summary():
+    """
+    One row per fund with what it was allocated and what it has actually done.
+
+    Replaces reading aware_fund_summary for this purpose: that table is fed by
+    the NAV calculator, which derives everything from investor deposits and a
+    positions table nothing writes, so it reports NAV 1.0 and zero AUM for
+    every fund regardless of activity.
+    """
+    try:
+        client = get_clickhouse_client()
+
+        pnl_rows = client.query("""
+            SELECT fund_id, positions, cost_usd, realized_pnl,
+                   unrealized_pnl, total_pnl, roi_pct
+            FROM polybot.aware_fund_pnl
+            WHERE calculated_at = (SELECT max(calculated_at) FROM polybot.aware_fund_pnl)
+        """).result_rows
+        by_fund = {r[0]: r for r in pnl_rows}
+
+        # ALPHA-ARB trades directly rather than mirroring, so its figures come
+        # from the strategy table instead, where they are exact.
+        gabagool = client.query("""
+            SELECT positions, cost_usd - stale_cost_usd, realized_pnl,
+                   unrealized_pnl, total_pnl, roi_pct
+            FROM polybot.aware_strategy_pnl
+            WHERE strategy = 'GABAGOOL'
+            ORDER BY calculated_at DESC
+            LIMIT 1
+        """).result_rows
+
+        funds = []
+        for fund_id, pct in FUND_CAPITAL_PCT.items():
+            row = by_fund.get(fund_id)
+            exact = False
+            if fund_id == 'ALPHA-ARB' and gabagool:
+                row = (fund_id,) + tuple(gabagool[0])
+                exact = True
+
+            allocated = _allocated_capital(fund_id)
+            if row:
+                funds.append({
+                    'fund_id': fund_id,
+                    'category': 'MIRROR' if fund_id.startswith('PSI') else 'ACTIVE',
+                    'description': FUND_DESCRIPTIONS.get(fund_id, ''),
+                    'allocated_capital': allocated,
+                    'has_data': True,
+                    'apportioned': not exact,
+                    'positions': int(row[1]),
+                    'invested': float(row[2]),
+                    'realized_pnl': float(row[3]),
+                    'unrealized_pnl': float(row[4]),
+                    'total_pnl': float(row[5]),
+                    'roi_pct': float(row[6]),
+                })
+            else:
+                funds.append({
+                    'fund_id': fund_id,
+                    'category': 'MIRROR' if fund_id.startswith('PSI') else 'ACTIVE',
+                    'description': FUND_DESCRIPTIONS.get(fund_id, ''),
+                    'allocated_capital': allocated,
+                    'has_data': False,
+                    'apportioned': True,
+                    'positions': 0, 'invested': 0.0, 'realized_pnl': 0.0,
+                    'unrealized_pnl': 0.0, 'total_pnl': 0.0, 'roi_pct': 0.0,
+                })
+
+        return {
+            'total_capital': float(os.getenv('TOTAL_CAPITAL_USD', '100000')),
+            'total_invested': sum(f['invested'] for f in funds),
+            'total_pnl': sum(f['total_pnl'] for f in funds),
+            'funds': sorted(funds, key=lambda f: -f['invested']),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get funds summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
