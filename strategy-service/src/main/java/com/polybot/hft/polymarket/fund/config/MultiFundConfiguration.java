@@ -84,6 +84,28 @@ public class MultiFundConfiguration {
             log.info("Initializing fund: {} with ${} capital ({}%)",
                     fundType, capital, allocation.getCapitalPct());
 
+            // A fund whose largest permitted position is smaller than its
+            // smallest permitted order can never place one: sizing caps the
+            // order at max-position first, then rejects it for being under
+            // min-trade. The fund starts, polls, builds signals and discards
+            // every one of them, silently, at debug level.
+            //
+            // The two limits are set independently — one a fraction, one an
+            // absolute — so the contradiction only appears at a particular
+            // total capital. It bites hardest when scaling down: at $100k
+            // every fund clears its floor, at $1k most do not.
+            BigDecimal maxPosition = capital.multiply(
+                    BigDecimal.valueOf(allocation.getMaxPositionPct()));
+            if (maxPosition.compareTo(allocation.getMinTradeUsd()) < 0) {
+                log.error("Fund {} cannot place any order: max-position-pct {} of ${} "
+                                + "capital is ${}, below its min-trade-usd of ${}. "
+                                + "Raise the allocation, raise max-position-pct, or "
+                                + "lower min-trade-usd.",
+                        fundType, allocation.getMaxPositionPct(), capital,
+                        maxPosition.setScale(2, java.math.RoundingMode.HALF_UP),
+                        allocation.getMinTradeUsd());
+            }
+
             try {
                 // PSI funds use mirror architecture
                 if (fundType.startsWith("PSI-")) {
