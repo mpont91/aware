@@ -1113,25 +1113,25 @@ async def get_consensus_markets(
 
         query = f"""
         WITH smart_traders AS (
-            SELECT username
+            SELECT proxy_address
             FROM polybot.aware_smart_money_scores FINAL
             WHERE total_score >= 45
+              AND proxy_address != ''
             LIMIT 100
         )
         SELECT
-            market_slug,
-            any(title) as title,
-            outcome,
-            count(DISTINCT username) as trader_count,
-            sum(notional) as total_volume,
-            avg(price) as avg_price
-        FROM polybot.aware_global_trades
-        WHERE
-            username IN (SELECT username FROM smart_traders)
-            AND ts >= now() - INTERVAL {hours} HOUR
-        GROUP BY market_slug, outcome
-        HAVING count(DISTINCT username) >= {min_traders}
-           AND sum(notional) >= {min_volume}
+            t.market_slug,
+            any(t.title) as title,
+            t.outcome,
+            count(DISTINCT t.proxy_address) as trader_count,
+            sum(t.notional) as total_volume,
+            avg(t.price) as avg_price
+        FROM polybot.aware_global_trades t
+        INNER JOIN smart_traders st ON t.proxy_address = st.proxy_address
+        WHERE t.ts >= now() - INTERVAL {hours} HOUR
+        GROUP BY t.market_slug, t.outcome
+        HAVING count(DISTINCT t.proxy_address) >= {min_traders}
+           AND sum(t.notional) >= {min_volume}
         ORDER BY total_volume DESC
         LIMIT 20
         """
