@@ -532,8 +532,17 @@ async def get_monitoring():
         status = 'healthy'
         issues = []
 
-        if lag_seconds > 300:
-            issues.append(f"Ingestion lag: {lag_seconds}s (>5min)")
+        # Polymarket's own API publishes a trade several minutes after it
+        # happens: measured over six hours the gap between a trade's timestamp
+        # and its arrival runs p50 276s, p95 300s. A 5 minute threshold
+        # therefore fired on almost every check, which is not an alert, it is
+        # a permanent state — and it kept the reported status at "degraded" so
+        # consistently that a real problem would have looked the same.
+        # Set where a genuine stall would sit, not where the normal lag does.
+        INGESTION_LAG_LIMIT_S = 900
+        if lag_seconds > INGESTION_LAG_LIMIT_S:
+            issues.append(
+                f"Ingestion lag: {lag_seconds}s (>{INGESTION_LAG_LIMIT_S // 60}min)")
             status = 'degraded'
         if lag_seconds > 900:
             status = 'unhealthy'
@@ -545,7 +554,12 @@ async def get_monitoring():
         def safe_count(query: str) -> int:
             try:
                 return client.query(query).result_rows[0][0]
-            except Exception:
+            except Exception as e:
+                # Logged, not swallowed. A misspelled table name here returned
+                # a clean zero indistinguishable from a genuinely empty table:
+                # this reported "0 resolutions tracked" for as long as it has
+                # existed while the table held thousands.
+                logger.warning(f"Monitoring count failed ({query.strip()[:60]}...): {e}")
                 return 0
 
         def safe_datetime(query: str):
@@ -560,7 +574,8 @@ async def get_monitoring():
         traders_scored = safe_count("SELECT count() FROM aware_smart_money_scores FINAL")
         traders_pnl = safe_count("SELECT count() FROM aware_trader_pnl FINAL WHERE total_realized_pnl != 0")
         traders_sharpe = safe_count("SELECT count() FROM aware_ml_scores FINAL WHERE sharpe_ratio != 0")
-        resolutions = safe_count("SELECT count() FROM aware_resolutions FINAL")
+        resolutions = safe_count(
+            "SELECT count() FROM aware_market_resolutions FINAL WHERE is_resolved = 1")
         last_scoring = safe_datetime("SELECT max(calculated_at) FROM aware_smart_money_scores")
 
         # Whether the engine is trading, which nothing here watched before.
