@@ -220,6 +220,10 @@ services:
       WEBHOOK_URL: ${WEBHOOK_URL:-}
       ALERT_MIN_SEVERITY: ${ALERT_MIN_SEVERITY:-HIGH}
       ALERT_DEDUP_TTL_HOURS: ${ALERT_DEDUP_TTL_HOURS:-24}
+      # Operational alerting: failed jobs and a stalled engine.
+      OPS_ALERT_REPEAT_HOURS: ${OPS_ALERT_REPEAT_HOURS:-6}
+      OPS_ALERT_STALL_MINUTES: ${OPS_ALERT_STALL_MINUTES:-60}
+      OPS_ALERT_IGNORE_JOBS: ${OPS_ALERT_IGNORE_JOBS:-ml_enrichment,drift_monitoring}
       LOG_LEVEL: INFO
     restart: unless-stopped
 

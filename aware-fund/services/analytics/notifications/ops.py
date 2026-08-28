@@ -35,6 +35,19 @@ REPEAT_AFTER = timedelta(hours=int(os.getenv('OPS_ALERT_REPEAT_HOURS', '6')))
 # continuously on 5- and 15-minute markets.
 STALL_MINUTES = int(os.getenv('OPS_ALERT_STALL_MINUTES', '60'))
 
+# Jobs whose failure is known, understood and not actionable, so alerting on
+# them is noise rather than news. Both of these fail on "No module named
+# 'ml.models'": the package is simply not in the repository, so nothing can be
+# done about it from here and every cycle would otherwise report it forever.
+# Drop a name from this list the day the cause is fixed — a muted failure that
+# nobody remembers muting is worse than no alerting at all.
+IGNORED_JOBS = {
+    name.strip()
+    for name in os.getenv('OPS_ALERT_IGNORE_JOBS',
+                          'ml_enrichment,drift_monitoring').split(',')
+    if name.strip()
+}
+
 # Problem key -> when it was last reported. Lives for the life of the process,
 # which in continuous mode is the life of the container; a restart re-reports
 # anything still broken, which is the right side to err on.
@@ -51,6 +64,8 @@ def _collect_failed_jobs(results: dict) -> list[tuple[str, str]]:
     """Jobs the pipeline itself reported as failed."""
     problems = []
     for name, outcome in (results or {}).items():
+        if name in IGNORED_JOBS:
+            continue
         if isinstance(outcome, dict) and outcome.get('status') == 'error':
             reason = str(outcome.get('error') or 'no reason given')[:200]
             problems.append((f'job:{name}', f'Job "{name}" failed: {reason}'))
