@@ -205,6 +205,21 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
       SCORING_INTERVAL_SECONDS: 3600
+      # How often the P&L is recomputed between full cycles. The dashboard and
+      # the paper bankroll both read it, so it runs far more often than the
+      # hourly pipeline around it.
+      PNL_INTERVAL_SECONDS: ${PNL_INTERVAL_SECONDS:-300}
+      # Alert delivery. The dispatcher reads these from the environment and
+      # treats a blank one as "channel off", but it only ever saw the variables
+      # the container was handed — which did not include any of them, so
+      # setting them in .env changed nothing.
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_THREAD_ID: ${TELEGRAM_THREAD_ID:-}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      ALERT_MIN_SEVERITY: ${ALERT_MIN_SEVERITY:-HIGH}
+      ALERT_DEDUP_TTL_HOURS: ${ALERT_DEDUP_TTL_HOURS:-24}
       LOG_LEVEL: INFO
     restart: unless-stopped
 

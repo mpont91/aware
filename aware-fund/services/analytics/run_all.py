@@ -174,6 +174,12 @@ def run_hidden_alpha_discovery(ch_client) -> dict:
         discovery = HiddenAlphaDiscovery(ch_client)
         traders = discovery.discover_all()
 
+        # Persist them. The scan ran every cycle and the results were counted,
+        # logged and dropped, so the Discovery page had nothing to read.
+        saved = discovery.save_discoveries(traders)
+        if not saved:
+            logger.warning("Discoveries were found but could not be stored")
+
         by_type = {}
         for t in traders:
             type_name = t.discovery_type.value

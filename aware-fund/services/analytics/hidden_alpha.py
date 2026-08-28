@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from enum import Enum
 import math
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,10 @@ class DiscoveryType(Enum):
 @dataclass
 class HiddenTrader:
     """A discovered hidden alpha trader"""
+    # The wallet is the identity. username is display only: almost no
+    # Polymarket account sets one, so keying discoveries on it produced rows
+    # nobody could look up.
+    proxy_address: str
     username: str
     discovery_type: DiscoveryType
     discovery_score: float      # 0-100, how "hidden" yet valuable
@@ -136,6 +141,7 @@ class HiddenAlphaDiscovery:
         -- Get comprehensive trader metrics
         trader_metrics AS (
             SELECT
+                proxy_address,
                 username,
                 total_score,
                 sharpe_ratio,
@@ -163,6 +169,7 @@ class HiddenAlphaDiscovery:
             FROM trader_metrics
         )
         SELECT
+            proxy_address,
             username,
             total_score,
             sharpe_ratio,
@@ -194,16 +201,17 @@ class HiddenAlphaDiscovery:
             discoveries = []
 
             for row in result.result_rows:
-                username = row[0]
-                total_score = row[1]
-                sharpe = row[2]
-                win_rate = row[3] or 0
-                volume = row[4]
-                total_trades = row[5]
-                days_active = row[6]
-                total_pnl = row[7]
-                strategy_type = row[8]
-                unique_markets = row[9]
+                proxy_address = row[0]
+                username = row[1]
+                total_score = row[2]
+                sharpe = row[3]
+                win_rate = row[4] or 0
+                volume = row[5]
+                total_trades = row[6]
+                days_active = row[7]
+                total_pnl = row[8]
+                strategy_type = row[9]
+                unique_markets = row[10]
                 sharpe_pct = row[10]
                 winrate_pct = row[11]
                 pnl_pct = row[12]
@@ -223,6 +231,7 @@ class HiddenAlphaDiscovery:
                 edge_persistence = min(0.9, 0.5 + (trades_per_day * 0.05) + (win_rate * 0.2))
 
                 trader = HiddenTrader(
+                    proxy_address=proxy_address,
                     username=username,
                     discovery_type=DiscoveryType.HIDDEN_GEM,
                     discovery_score=discovery_score,
@@ -276,6 +285,7 @@ class HiddenAlphaDiscovery:
         -- Get recent traders
         new_traders AS (
             SELECT
+                proxy_address,
                 username,
                 total_score,
                 sharpe_ratio,
@@ -312,6 +322,7 @@ class HiddenAlphaDiscovery:
             WHERE days_active >= 30  -- Established traders
         )
         SELECT
+            pa.proxy_address,
             pa.username,
             pa.total_score,
             pa.sharpe_ratio,
@@ -351,17 +362,18 @@ class HiddenAlphaDiscovery:
             discoveries = []
 
             for row in result.result_rows:
-                username = row[0]
-                total_score = row[1]
-                sharpe = row[2]
-                win_rate = row[3] or 0
-                volume = row[4]
-                total_trades = row[5]
-                days_active = row[6]
-                total_pnl = row[7]
-                strategy_type = row[8]
-                unique_markets = row[9]
-                pnl_per_day = row[10]
+                proxy_address = row[0]
+                username = row[1]
+                total_score = row[2]
+                sharpe = row[3]
+                win_rate = row[4] or 0
+                volume = row[5]
+                total_trades = row[6]
+                days_active = row[7]
+                total_pnl = row[8]
+                strategy_type = row[9]
+                unique_markets = row[10]
+                pnl_per_day = row[11]
                 trades_per_day = row[11]
                 volume_per_day = row[12]
                 avg_sharpe = row[13]
@@ -392,6 +404,7 @@ class HiddenAlphaDiscovery:
                 edge_persistence = min(0.7, 0.3 + (win_rate * 0.3) + (acceleration * 0.2))
 
                 trader = HiddenTrader(
+                    proxy_address=proxy_address,
                     username=username,
                     discovery_type=DiscoveryType.RISING_STAR,
                     discovery_score=discovery_score,
@@ -438,6 +451,7 @@ class HiddenAlphaDiscovery:
         # For now, find traders with high market concentration
         query = f"""
         SELECT
+            proxy_address,
             username,
             total_score,
             sharpe_ratio,
@@ -460,22 +474,23 @@ class HiddenAlphaDiscovery:
             discoveries = []
 
             for row in result.result_rows:
-                unique_markets = row[5] or 1
-                sharpe = row[2]
+                unique_markets = row[6] or 1
+                sharpe = row[3]
 
                 # Specialists focus on few markets
                 concentration = 1.0 / max(1, unique_markets)
                 discovery_score = sharpe * 30 + concentration * 40
 
                 trader = HiddenTrader(
-                    username=row[0],
+                    proxy_address=row[0],
+                    username=row[1],
                     discovery_type=DiscoveryType.NICHE_SPECIALIST,
                     discovery_score=min(100, discovery_score),
                     visibility_score=40,
                     leaderboard_rank=None,
-                    total_score=row[1],
+                    total_score=row[2],
                     sharpe_ratio=sharpe,
-                    win_rate=row[3] or 0,
+                    win_rate=row[4] or 0,
                     edge_persistence=0.8,  # Specialists tend to persist
                     discovery_reason=f"Focused on {unique_markets} markets with {sharpe:.2f} Sharpe",
                     discovered_at=datetime.utcnow(),
@@ -507,6 +522,7 @@ class HiddenAlphaDiscovery:
         # and positive P&L (they're right despite going against flow)
         query = f"""
         SELECT
+            proxy_address,
             username,
             total_score,
             sharpe_ratio,
@@ -529,21 +545,22 @@ class HiddenAlphaDiscovery:
             discoveries = []
 
             for row in result.result_rows:
-                pnl = row[4]
-                sharpe = row[2]
-                strategy = row[6]
+                pnl = row[5]
+                sharpe = row[3]
+                strategy = row[7]
 
                 discovery_score = min(100, (sharpe * 30) + (math.log10(max(1, pnl)) * 10))
 
                 trader = HiddenTrader(
-                    username=row[0],
+                    proxy_address=row[0],
+                    username=row[1],
                     discovery_type=DiscoveryType.CONTRARIAN,
                     discovery_score=discovery_score,
                     visibility_score=50,
                     leaderboard_rank=None,
-                    total_score=row[1],
+                    total_score=row[2],
                     sharpe_ratio=sharpe,
-                    win_rate=row[3] or 0,
+                    win_rate=row[4] or 0,
                     edge_persistence=0.6,
                     discovery_reason=f"{strategy} trader with ${pnl:,.0f} P&L going against consensus",
                     discovered_at=datetime.utcnow(),
@@ -607,25 +624,63 @@ class HiddenAlphaDiscovery:
             'by_type': by_type,
         }
 
+    @staticmethod
+    def _risk_level(d: HiddenTrader) -> str:
+        """Coarse risk banding from the Sharpe ratio, for sorting in the UI."""
+        if d.sharpe_ratio >= 2.0:
+            return 'LOW'
+        if d.sharpe_ratio >= 1.0:
+            return 'MEDIUM'
+        return 'HIGH'
+
     def save_discoveries(self, discoveries: list[HiddenTrader]) -> bool:
-        """Save discoveries to ClickHouse for tracking"""
+        """
+        Store the discoveries so the dashboard can read them.
+
+        This used to build the rows and then log "Would save N discoveries"
+        without inserting any, so the Discovery page had nothing to show no
+        matter how many traders the scan turned up.
+        """
+        if not discoveries:
+            return True
+
         try:
+            now = datetime.utcnow()
             rows = []
             for d in discoveries:
-                rows.append((
-                    d.username,
+                metrics = d.standout_metrics or {}
+                rows.append([
+                    # Deterministic per trader and type, so a rerun replaces the
+                    # previous row rather than piling up duplicates.
+                    f"{d.discovery_type.value}:{d.proxy_address}",
+                    d.username or '',
+                    d.proxy_address,
                     d.discovery_type.value,
-                    d.discovery_score,
-                    d.visibility_score,
-                    d.total_score,
-                    d.sharpe_ratio,
-                    d.win_rate,
+                    float(d.discovery_score),
                     d.discovery_reason,
-                    d.discovered_at,
-                ))
+                    Decimal(str(round(float(metrics.get('pnl', 0) or 0), 6))),
+                    float(d.sharpe_ratio or 0),
+                    float(d.win_rate or 0),
+                    int(metrics.get('total_trades', 0) or 0),
+                    int(metrics.get('days_active', 0) or 0),
+                    # No model estimates upside, so it is reported as zero
+                    # rather than invented.
+                    0.0,
+                    self._risk_level(d),
+                    d.discovered_at or now,
+                ])
 
-            # Would insert to aware_hidden_alpha table
-            logger.info(f"Would save {len(rows)} discoveries")
+            self.ch.insert(
+                'polybot.aware_hidden_alpha',
+                rows,
+                column_names=[
+                    'id', 'username', 'proxy_address', 'discovery_type',
+                    'discovery_score', 'reason', 'total_pnl', 'sharpe_ratio',
+                    'win_rate', 'total_trades', 'days_active',
+                    'upside_estimate', 'risk_level', 'discovered_at',
+                ],
+            )
+            logger.info(f"Saved {len(rows)} discoveries")
             return True
 
         except Exception as e:
