@@ -263,6 +263,11 @@ class MonitoringResponse(BaseModel):
     traders_with_sharpe: int
     resolutions_tracked: int
     last_scoring_at: Optional[UtcDatetime]
+    # The trading side. Everything above describes data arriving; these say
+    # whether anything is being done with it.
+    last_execution_at: Optional[str] = None
+    last_fill_at: Optional[str] = None
+    minutes_since_execution: Optional[float] = None
 
 
 class DailyStats(BaseModel):
@@ -558,6 +563,38 @@ async def get_monitoring():
         resolutions = safe_count("SELECT count() FROM aware_resolutions FINAL")
         last_scoring = safe_datetime("SELECT max(calculated_at) FROM aware_smart_money_scores")
 
+        # Whether the engine is trading, which nothing here watched before.
+        # Every check above is about data coming IN, and the ingestor is a
+        # separate service: it ran perfectly through the night the strategy
+        # service spent seven hours unable to reach ClickHouse, so this endpoint
+        # reported healthy the whole time while no order was placed and no fill
+        # was recorded. Silence on the trading side looks identical to a quiet
+        # market unless something asks.
+        last_execution = safe_datetime(
+            "SELECT max(executed_at) FROM aware_fund_executions")
+        last_fill = safe_datetime("SELECT max(ts) FROM user_trades")
+
+        def minutes_since(when) -> Optional[float]:
+            if not when:
+                return None
+            return (datetime.now(timezone.utc) - _as_utc(when)).total_seconds() / 60
+
+        execution_age = minutes_since(last_execution)
+        fill_age = minutes_since(last_fill)
+
+        # An hour is well past any plausible lull: the mirror funds place orders
+        # within seconds of a constituent trading, and GABAGOOL quotes
+        # continuously on 5- and 15-minute markets.
+        if execution_age is None:
+            issues.append("No fund execution has ever been recorded")
+        elif execution_age > 60:
+            issues.append(f"No fund execution for {execution_age / 60:.1f}h")
+        if fill_age is not None and fill_age > 60:
+            issues.append(f"No simulated fill for {fill_age / 60:.1f}h")
+
+        if issues and status == 'healthy':
+            status = 'degraded'
+
         return MonitoringResponse(
             ingestion_status=status,
             trades_last_hour=trades_1h,
@@ -574,7 +611,10 @@ async def get_monitoring():
             traders_with_pnl=traders_pnl,
             traders_with_sharpe=traders_sharpe,
             resolutions_tracked=resolutions,
-            last_scoring_at=last_scoring
+            last_scoring_at=last_scoring,
+            last_execution_at=utc_iso(last_execution),
+            last_fill_at=utc_iso(last_fill),
+            minutes_since_execution=round(execution_age, 1) if execution_age is not None else None,
         )
 
     except HTTPException:
