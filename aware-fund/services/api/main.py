@@ -3349,12 +3349,17 @@ async def get_ml_health():
             if tier not in tier_distribution:
                 tier_distribution[tier] = 0
 
-        # Parse enrichment stats
+        # How long since the ML enrichment last wrote anything. None when the
+        # table has never had a row, which is the case here: the ml/models
+        # package is absent from the repository, so nothing produces enrichment.
+        # That is a missing component, not a stale one, and reporting it as
+        # 9999 minutes of staleness turned it into a permanent "drift critical"
+        # against a baseline that has never existed.
+        enrichment_minutes_ago = None
         if enrichment_result.result_rows:
             e_row = enrichment_result.result_rows[0]
-            minutes_ago = e_row[4] if e_row[4] else 9999
-        else:
-            minutes_ago = 9999
+            if e_row[4]:
+                enrichment_minutes_ago = int(e_row[4])
 
         # Parse scoring stats
         traders_scored = 0
@@ -3369,24 +3374,29 @@ async def get_ml_health():
         # Determine scoring method from model version
         scoring_method = 'ml_ensemble' if 'ensemble' in model_version.lower() else 'rule_based'
 
-        # Compute overall status
-        if minutes_ago < 120 and traders_scored > 0:
-            status = 'healthy'
-        elif minutes_ago < 360 or traders_scored > 0:
-            status = 'degraded'
-        else:
-            status = 'unhealthy'
+        # Health is judged on the scoring, which is what actually runs and what
+        # every downstream index depends on. It was judged on the enrichment
+        # table before, so the badge read "degraded" while scoring was running
+        # on time over thousands of traders.
+        scoring_minutes_ago = 9999
+        if last_scoring_at:
+            scoring_minutes_ago = (
+                datetime.now(timezone.utc) - datetime.fromisoformat(last_scoring_at)
+            ).total_seconds() / 60
 
-        # Compute drift status (based on data freshness for now)
-        if minutes_ago < 60:
-            drift_status = 'normal'
-            drift_ratio = 0.0
-        elif minutes_ago < 240:
-            drift_status = 'warning'
-            drift_ratio = min(0.3, minutes_ago / 800)
+        if traders_scored <= 0:
+            status = 'unhealthy'
+        elif scoring_minutes_ago < 120:
+            status = 'healthy'
         else:
-            drift_status = 'critical'
-            drift_ratio = min(0.8, minutes_ago / 500)
+            status = 'degraded'
+
+        # Drift needs a baseline to be measured against, and there is none:
+        # aware_ml_drift_reports is empty because the job that fills it never
+        # runs. Saying so beats deriving a number from how old another table is.
+        drift_status = 'unavailable'
+        drift_ratio = 0.0
+        drifted_features = []
 
         return {
             'status': status,
@@ -3397,7 +3407,10 @@ async def get_ml_health():
             'tier_distribution': tier_distribution,
             'drift_status': drift_status,
             'drift_ratio': drift_ratio,
-            'drifted_features': [] if drift_status == 'normal' else ['data_freshness']
+            'drifted_features': drifted_features,
+            # Null rather than a staleness figure when nothing has ever
+            # produced enrichment, so the page can say so plainly.
+            'enrichment_minutes_ago': enrichment_minutes_ago,
         }
 
     except HTTPException:

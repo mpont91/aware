@@ -120,6 +120,7 @@ export default function AllFundsPage() {
 
   // Calculate totals
   const totalInvested = (funds || []).reduce((sum, f) => sum + (f.invested || 0), 0)
+  const totalInMarket = (funds || []).reduce((sum, f) => sum + (f.open_cost_usd || 0), 0)
   const avgPerformance = (funds?.length || 0) > 0
     ? (funds || []).reduce((sum, f) => sum + (f.roi_pct || 0), 0) / funds.length
     : 0
@@ -177,8 +178,18 @@ export default function AllFundsPage() {
               <DollarSign className="w-5 h-5 text-green-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{formatCurrency(totalInvested)}</p>
-              <p className="text-sm text-slate-400">Total deployed</p>
+              {/* Was "Total deployed" against the cumulative figure, which is
+                  the same confusion the individual cards had: it counts every
+                  position ever taken, so it climbs past the allocation as
+                  capital is recycled. Leads with what is actually at risk. */}
+              <p className="text-2xl font-bold text-white">{formatCurrency(totalInMarket)}</p>
+              <p className="text-sm text-slate-400">In market now</p>
+              <p
+                className="text-xs text-slate-500 mt-0.5 tabular-nums"
+                title="Cumulative cost of every position taken across all funds, settled ones included"
+              >
+                {formatCurrency(totalInvested)} traded in total
+              </p>
             </div>
           </div>
         </div>

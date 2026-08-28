@@ -49,6 +49,8 @@ interface FundOverview {
   nav: number
   capital: number
   position_value: number
+  /** Cost basis of what the fund still holds. */
+  open_cost_usd: number
   unrealized_pnl: number
   realized_pnl: number
   total_return: number
@@ -207,6 +209,7 @@ function FundPageContent() {
             nav: p.cost_usd + p.total_pnl,
             capital: p.cost_usd,
             position_value: p.cost_usd + p.unrealized_pnl,
+            open_cost_usd: p.open_cost_usd ?? 0,
             unrealized_pnl: p.unrealized_pnl,
             realized_pnl: p.realized_pnl,
             total_return: p.roi_pct,
@@ -416,10 +419,22 @@ function FundPageContent() {
           )}>
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                  <p className="text-slate-400 text-sm">Current value</p>
+                  {/* The P&L, not "current value". That was cost + P&L: for a
+                      fund whose markets have all resolved at a loss it reads
+                      $0.00, which sounds like the fund is empty when what it
+                      means is that the money it put to work did not come back.
+                      The fund still holds its allocation; what you want to see
+                      is whether it is up or down. */}
+                  <p className="text-slate-400 text-sm">Profit &amp; loss</p>
                   <div className="flex items-baseline gap-3 mt-1">
-                    <span className="text-4xl font-bold text-white">
-                      {overview.has_data ? formatCurrency(overview.nav) : '\u2014'}
+                    <span className={cn(
+                      'text-4xl font-bold',
+                      !overview.has_data ? 'text-white'
+                        : isPositive ? 'text-green-400' : 'text-red-400'
+                    )}>
+                      {overview.has_data
+                        ? `${isPositive ? '+' : '\u2212'}${formatCurrency(Math.abs(totalReturn))}`
+                        : '\u2014'}
                     </span>
                     {overview.has_data && (
                       <span className={cn(
@@ -590,10 +605,17 @@ function FundPageContent() {
                 <div className="p-2 rounded-lg bg-blue-500/10">
                   <DollarSign className="h-5 w-5 text-blue-400" />
                 </div>
-                <span className="text-slate-400 text-sm">Position Value</span>
+                {/* Was "Position Value" showing cost + unrealized, which for a
+                    fund with nothing open is just everything it ever spent. */}
+                <span
+                  className="text-slate-400 text-sm"
+                  title="Cost basis of the positions the fund still holds"
+                >
+                  In market now
+                </span>
               </div>
               <p className="text-2xl font-bold text-white">
-                {formatCurrency(overview.position_value)}
+                {formatCurrency(overview.open_cost_usd)}
               </p>
             </div>
 

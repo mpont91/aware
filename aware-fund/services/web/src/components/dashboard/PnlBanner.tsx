@@ -132,7 +132,16 @@ export function PnlBanner() {
         <div className="flex gap-8">
           {strategies.map((s) => (
             <div key={s.strategy}>
-              <p className="text-xs text-slate-500 mb-1">{s.strategy}</p>
+              <p
+                className="text-xs text-slate-500 mb-1"
+                title={
+                  s.strategy === 'UNATTRIBUTED'
+                    ? 'Fills with no order record behind them, so they cannot be traced to a strategy. They appear when the engine places an order but cannot write it down — the fill still comes back through the trade feed.'
+                    : undefined
+                }
+              >
+                {s.strategy}
+              </p>
               <p
                 className={[
                   'text-lg font-semibold tabular-nums',
