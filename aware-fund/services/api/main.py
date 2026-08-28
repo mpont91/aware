@@ -3355,10 +3355,13 @@ async def get_ml_health():
         # That is a missing component, not a stale one, and reporting it as
         # 9999 minutes of staleness turned it into a permanent "drift critical"
         # against a baseline that has never existed.
+        # Guarded on the row count, not on the age. max() over an empty table
+        # returns the epoch, so dateDiff hands back ~29.8 million minutes, which
+        # is not staleness — it is emptiness wearing a number.
         enrichment_minutes_ago = None
         if enrichment_result.result_rows:
             e_row = enrichment_result.result_rows[0]
-            if e_row[4]:
+            if int(e_row[0] or 0) > 0 and e_row[4]:
                 enrichment_minutes_ago = int(e_row[4])
 
         # Parse scoring stats
