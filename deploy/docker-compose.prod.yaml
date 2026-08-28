@@ -297,7 +297,12 @@ services:
       AWARE_USER: ${AWARE_USER:-admin}
       AWARE_PASSWORD_HASH: ${AWARE_PASSWORD_HASH:-}
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # The directory, not the file. Bind-mounting a single file pins the
+      # container to that inode, and git pull replaces files rather than
+      # editing them in place — so every Caddyfile change since the container
+      # was created was invisible inside it, including a rate-limit fix that
+      # appeared to deploy and did nothing.
+      - ./caddy:/etc/caddy:ro
       # Certificates live here. Without this volume Caddy re-requests them on
       # every recreate and hits Let's Encrypt rate limits.
       - caddy_data:/data

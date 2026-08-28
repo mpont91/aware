@@ -230,6 +230,12 @@ deploy: require-server ## Pull and restart on the server (one command)
 # --build because this project builds its images rather than pulling them.
 prod-up: ## Build and start the production stack (run on the server)
 	docker compose $(PROD_COMPOSE) up -d --build
+	@# Caddy reads its config at startup and compose does not recreate it when
+	@# only the mounted file changed, so a routing or rate-limit edit would sit
+	@# on disk unapplied until something else forced a restart.
+	@docker compose $(PROD_COMPOSE) exec -T caddy caddy reload \
+		--config /etc/caddy/Caddyfile 2>/dev/null \
+		&& echo "caddy config reloaded" || echo "caddy not running; skipped reload"
 	docker image prune -f
 
 prod-down: ## Stop the production stack (run on the server)
