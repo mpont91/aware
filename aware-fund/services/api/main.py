@@ -1204,78 +1204,63 @@ async def get_index_by_type(index_type: str):
 # HIDDEN ALPHA ENDPOINTS
 # ============================================================================
 
+def _discoveries_from_table(client, discovery_type: str, limit: int) -> list:
+    """
+    Read what the hidden-alpha scan stored.
+
+    Each of these endpoints used to run its own simplified query over the
+    scores and profiles rather than reading the scan's output, and every one
+    ended with `AND username != ''`. Practically no Polymarket account sets a
+    username, so the filter excluded the entire trader pool and all three
+    endpoints returned nothing no matter what the scan had found.
+    """
+    rows = client.query("""
+        SELECT username, proxy_address, discovery_score, reason, total_pnl,
+               sharpe_ratio, win_rate, total_trades, days_active, risk_level,
+               discovered_at
+        FROM polybot.aware_hidden_alpha FINAL
+        WHERE discovery_type = %(discovery_type)s
+        ORDER BY discovery_score DESC
+        LIMIT %(limit)s
+    """, parameters={'discovery_type': discovery_type, 'limit': limit}).result_rows
+
+    return [{
+        # The wallet stands in when there is no username, so a discovery is
+        # always identifiable.
+        'username': r[0] or r[1],
+        'proxy_address': r[1],
+        'discovery_type': discovery_type,
+        'discovery_score': round(float(r[2]), 1),
+        'reason': r[3],
+        'total_pnl': round(float(r[4]), 2),
+        'sharpe_ratio': round(float(r[5]), 2),
+        'win_rate': round(float(r[6]), 1),
+        'total_trades': int(r[7]),
+        'days_active': int(r[8]),
+        'risk_level': r[9],
+        'discovered_at': utc_iso(r[10]),
+    } for r in rows]
+
+
 @app.get("/api/discovery/hidden-gems")
 async def get_hidden_gems(limit: int = Query(default=10, ge=1, le=50)):
     """
-    Find Hidden Gems: High quality traders with low visibility.
-
-    These are traders with good scores but low volume - not yet on the public radar.
+    Traders the hidden-alpha scan flagged as hidden gem.
     """
     try:
         client = get_clickhouse_client()
-
-        # Join scores with profiles to get all metrics
-        query = f"""
-        SELECT
-            s.username,
-            s.total_score,
-            s.profitability_score,
-            s.risk_adjusted_score,
-            p.total_volume_usd,
-            p.total_trades,
-            p.days_active,
-            p.total_pnl,
-            s.strategy_type
-        FROM (SELECT * FROM polybot.aware_smart_money_scores FINAL) AS s
-        JOIN (SELECT * FROM polybot.aware_trader_profiles FINAL) AS p
-            ON s.proxy_address = p.proxy_address
-        WHERE
-            s.total_score >= 40
-            AND p.total_volume_usd <= 50000
-            AND p.total_trades >= 20
-            AND s.username != ''
-        ORDER BY s.risk_adjusted_score DESC
-        LIMIT {limit}
-        """
-
-        result = client.query(query)
-
-        discoveries = []
-        for row in result.result_rows:
-            volume = row[4] or 0
-            score = row[1] or 0
-            risk_score = row[3] or 0
-            visibility = min(100, (volume / 100000) * 100)
-            discovery_score = min(100, score + (50 - visibility / 2))
-
-            discoveries.append({
-                'username': row[0],
-                'discovery_type': 'HIDDEN_GEM',
-                'discovery_score': round(discovery_score / 100, 2),
-                'visibility_score': round(visibility, 1),
-                'smart_money_score': score,
-                'sharpe_ratio': round(risk_score / 30, 2),  # Approximate from risk score
-                'win_rate': round(row[2] or 0, 1),  # Use profitability as proxy
-                'volume_usd': round(volume, 0),
-                'total_trades': row[5],
-                'total_pnl': round(row[7] or 0, 2),
-                'reason': f"Score {score} with only ${volume:,.0f} volume"
-            })
-
+        discoveries = _discoveries_from_table(client, 'HIDDEN_GEM', limit)
         return {
             'discovery_type': 'HIDDEN_GEM',
             'count': len(discoveries),
-            'discoveries': discoveries
+            'discoveries': discoveries,
         }
 
     except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
         raise
     except Exception as e:
-        logger.error(f"Failed to find hidden gems: {e}")
+        logger.error(f"Failed to read HIDDEN_GEM discoveries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/discovery/rising-stars")
 async def get_rising_stars(
@@ -1283,152 +1268,42 @@ async def get_rising_stars(
     limit: int = Query(default=10, ge=1, le=50)
 ):
     """
-    Find Rising Stars: New traders with exceptional early performance.
-
-    These traders have been active for less than 30 days but show
-    exceptional metrics - potential future top performers.
+    Traders the hidden-alpha scan flagged as rising star.
     """
     try:
         client = get_clickhouse_client()
-
-        query = f"""
-        SELECT
-            s.username,
-            s.total_score,
-            s.profitability_score,
-            s.risk_adjusted_score,
-            p.total_volume_usd,
-            p.total_trades,
-            p.days_active,
-            p.total_pnl,
-            s.strategy_type
-        FROM (SELECT * FROM polybot.aware_smart_money_scores FINAL) AS s
-        JOIN (SELECT * FROM polybot.aware_trader_profiles FINAL) AS p
-            ON s.proxy_address = p.proxy_address
-        WHERE
-            p.days_active <= {max_days}
-            AND s.profitability_score >= 10
-            AND p.total_trades >= 10
-            AND s.username != ''
-        ORDER BY s.total_score DESC
-        LIMIT {limit}
-        """
-
-        result = client.query(query)
-
-        discoveries = []
-        for row in result.result_rows:
-            days_active = row[6] or 0
-            score = row[1] or 0
-            profit_score = row[2] or 0
-            risk_score = row[3] or 0
-
-            newness_score = max(0, 30 - days_active)
-            discovery_score = min(100, newness_score + score)
-
-            discoveries.append({
-                'username': row[0],
-                'discovery_type': 'RISING_STAR',
-                'discovery_score': round(discovery_score / 100, 2),
-                'days_active': days_active,
-                'smart_money_score': score,
-                'sharpe_ratio': round(risk_score / 30, 2),
-                'win_rate': round(profit_score, 1),
-                'total_trades': row[5],
-                'total_pnl': round(row[7] or 0, 2),
-                'reason': f"Only {days_active} days active with score {score}"
-            })
-
+        discoveries = _discoveries_from_table(client, 'RISING_STAR', limit)
         return {
             'discovery_type': 'RISING_STAR',
             'count': len(discoveries),
-            'discoveries': discoveries
+            'discoveries': discoveries,
         }
 
     except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
         raise
     except Exception as e:
-        logger.error(f"Failed to find rising stars: {e}")
+        logger.error(f"Failed to read RISING_STAR discoveries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/discovery/niche-specialists")
 async def get_niche_specialists(limit: int = Query(default=10, ge=1, le=50)):
     """
-    Find Niche Specialists: Traders who dominate specific market categories.
-
-    These traders focus on one area and significantly outperform in that category.
+    Traders the hidden-alpha scan flagged as niche specialist.
     """
     try:
         client = get_clickhouse_client()
-
-        query = f"""
-        SELECT
-            s.username,
-            s.total_score,
-            s.profitability_score,
-            s.risk_adjusted_score,
-            p.total_volume_usd,
-            p.unique_markets,
-            p.total_trades,
-            s.strategy_type,
-            p.total_pnl
-        FROM (SELECT * FROM polybot.aware_smart_money_scores FINAL) AS s
-        JOIN (SELECT * FROM polybot.aware_trader_profiles FINAL) AS p
-            ON s.proxy_address = p.proxy_address
-        WHERE
-            p.unique_markets <= 5
-            AND p.total_trades >= 20
-            AND s.total_score >= 35
-            AND s.username != ''
-        ORDER BY s.risk_adjusted_score DESC
-        LIMIT {limit}
-        """
-
-        result = client.query(query)
-
-        discoveries = []
-        for row in result.result_rows:
-            unique_markets = row[5] or 1
-            score = row[1] or 0
-            risk_score = row[3] or 0
-            concentration = 1.0 / max(1, unique_markets)
-            discovery_score = min(100, score + concentration * 30)
-
-            discoveries.append({
-                'username': row[0],
-                'discovery_type': 'NICHE_SPECIALIST',
-                'discovery_score': round(discovery_score / 100, 2),
-                'unique_markets': unique_markets,
-                'market_concentration': round(concentration * 100, 1),
-                'smart_money_score': score,
-                'sharpe_ratio': round(risk_score / 30, 2),
-                'win_rate': round(row[2] or 0, 1),
-                'total_trades': row[6],
-                'total_pnl': round(row[8] or 0, 2),
-                'reason': f"Focused on {unique_markets} markets with score {score}"
-            })
-
+        discoveries = _discoveries_from_table(client, 'NICHE_SPECIALIST', limit)
         return {
             'discovery_type': 'NICHE_SPECIALIST',
             'count': len(discoveries),
-            'discoveries': discoveries
+            'discoveries': discoveries,
         }
 
     except HTTPException:
-        # A deliberate 4xx must keep its status; the generic handler below
-        # would otherwise turn every validation error into a 500.
         raise
     except Exception as e:
-        logger.error(f"Failed to find niche specialists: {e}")
+        logger.error(f"Failed to read NICHE_SPECIALIST discoveries: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================================================
-# CONSENSUS SIGNAL ENDPOINTS
-# ============================================================================
 
 @app.get("/api/consensus/markets")
 async def get_consensus_markets(
