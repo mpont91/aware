@@ -224,6 +224,10 @@ services:
       OPS_ALERT_REPEAT_HOURS: ${OPS_ALERT_REPEAT_HOURS:-6}
       OPS_ALERT_STALL_MINUTES: ${OPS_ALERT_STALL_MINUTES:-60}
       OPS_ALERT_IGNORE_JOBS: ${OPS_ALERT_IGNORE_JOBS:-ml_enrichment,drift_monitoring}
+      # Hour (UTC) for the daily summary. 6 is early morning in Madrid, so it
+      # is waiting rather than interrupting.
+      DAILY_SUMMARY_HOUR_UTC: ${DAILY_SUMMARY_HOUR_UTC:-6}
+      TOTAL_CAPITAL_USD: ${TOTAL_CAPITAL_USD:-100000}
       LOG_LEVEL: INFO
     restart: unless-stopped
 

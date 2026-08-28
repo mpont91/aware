@@ -880,6 +880,15 @@ def run_all_jobs(ch_client) -> dict:
     # Look at what just happened. Each job returns a status and until now the
     # dict was assembled and thrown away, so a job could fail on every cycle
     # for days with nothing but a line in a container log to show for it.
+    # Once a day, say how it is going. The operational alerts only speak when
+    # something breaks, so silence means nothing is on fire — not that the bot
+    # is making money.
+    try:
+        from notifications.daily_summary import maybe_send
+        maybe_send(ch_client)
+    except Exception as e:
+        logger.error(f"Daily summary failed: {e}")
+
     try:
         from notifications.ops import check_and_notify
         health = check_and_notify(results, ch_client)
