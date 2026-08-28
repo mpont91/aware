@@ -212,10 +212,10 @@ class HiddenAlphaDiscovery:
                 total_pnl = row[8]
                 strategy_type = row[9]
                 unique_markets = row[10]
-                sharpe_pct = row[10]
-                winrate_pct = row[11]
-                pnl_pct = row[12]
-                visibility_pct = row[13]
+                sharpe_pct = row[11]
+                winrate_pct = row[12]
+                pnl_pct = row[13]
+                visibility_pct = row[14]
 
                 # Calculate visibility score (lower = more hidden)
                 visibility = min(100, (1 - visibility_pct) * 100)
@@ -374,14 +374,14 @@ class HiddenAlphaDiscovery:
                 strategy_type = row[9]
                 unique_markets = row[10]
                 pnl_per_day = row[11]
-                trades_per_day = row[11]
-                volume_per_day = row[12]
-                avg_sharpe = row[13]
-                avg_winrate = row[14]
-                avg_pnl_per_day = row[15]
-                sharpe_vs_avg = row[16]
-                winrate_vs_avg = row[17]
-                pnl_vs_avg = row[18]
+                trades_per_day = row[12]
+                volume_per_day = row[13]
+                avg_sharpe = row[14]
+                avg_winrate = row[15]
+                avg_pnl_per_day = row[16]
+                sharpe_vs_avg = row[17]
+                winrate_vs_avg = row[18]
+                pnl_vs_avg = row[19]
 
                 # Rising stars get bonus for being new with exceptional stats
                 discovery_score = self._calculate_star_score(
