@@ -2476,23 +2476,36 @@ async def get_insider_alerts(
 
         # Check if the insider alerts table exists
         try:
+            # Reads aware_alerts, which is where insider_detector writes and
+            # where ALPHA-INSIDER reads its signals from. This queried
+            # aware_insider_alerts, a table the schema creates and three views
+            # sit on top of but that nothing has ever written a row to — so the
+            # page reported no suspicious activity while thousands of alerts
+            # were being detected and traded on.
+            #
+            # The detail the page shows lives in the metadata JSON, since
+            # aware_alerts is the generic alert table rather than an
+            # insider-shaped one.
             result = client.query(f"""
                 SELECT
-                    signal_type,
+                    JSONExtractString(metadata, 'signal_type') AS signal_type,
                     severity,
                     market_slug,
-                    market_question,
-                    description,
-                    confidence,
-                    direction,
-                    total_volume_usd,
-                    num_traders,
-                    detected_at,
-                    traders_involved
-                FROM polybot.aware_insider_alerts FINAL
-                WHERE detected_at >= now() - INTERVAL {hours} HOUR
-                  AND confidence >= {min_confidence}
-                ORDER BY detected_at DESC, severity DESC
+                    title AS market_question,
+                    message AS description,
+                    JSONExtractFloat(metadata, 'confidence') AS confidence,
+                    JSONExtractString(metadata, 'direction') AS direction,
+                    JSONExtractFloat(metadata, 'total_volume_usd') AS total_volume_usd,
+                    JSONExtractUInt(metadata, 'num_traders') AS num_traders,
+                    created_at AS detected_at,
+                    arrayStringConcat(
+                        JSONExtractArrayRaw(metadata, 'traders_involved'), ','
+                    ) AS traders_involved
+                FROM polybot.aware_alerts FINAL
+                WHERE created_at >= now() - INTERVAL {hours} HOUR
+                  AND status = 'ACTIVE'
+                  AND JSONExtractFloat(metadata, 'confidence') >= {min_confidence}
+                ORDER BY created_at DESC, severity DESC
                 LIMIT 100
             """)
 

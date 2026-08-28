@@ -362,18 +362,6 @@ export default function DiscoveryPage() {
       </div>
       )}
 
-      {/* CTA */}
-      <div className="rounded-xl bg-slate-800/50 border border-slate-700 p-6 text-center">
-        <Sparkles className="h-8 w-8 text-purple-400 mx-auto mb-3" />
-        <h3 className="text-lg font-semibold text-white mb-2">Want More Discoveries?</h3>
-        <p className="text-sm text-slate-400 mb-4 max-w-md mx-auto">
-          Our algorithm finds new hidden gems daily. Subscribe to get alerts
-          when we discover high-potential traders matching your interests.
-        </p>
-        <button className="px-6 py-2.5 bg-gradient-to-r from-purple-500 to-aware-500 text-white font-medium rounded-lg hover:opacity-90 transition-opacity">
-          Enable Discovery Alerts
-        </button>
-      </div>
     </div>
   )
 }
