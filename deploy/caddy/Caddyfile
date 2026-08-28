@@ -28,18 +28,36 @@
 	# ── Rate limiting ───────────────────────────────────────────────────────
 	# Per client IP, matching the limits the previous nginx config enforced.
 	# Needs the caddy-ratelimit plugin, compiled in by deploy/Dockerfile.caddy.
+	# Per client IP. The numbers are set against how a Next.js page actually
+	# loads, not against a guess: opening the leaderboard fires the RSC prefetch
+	# for every trader link in view plus its JavaScript chunks, easily a hundred
+	# requests in the same second. At 30/s a chunk came back 429, which React
+	# cannot recover from — ChunkLoadError takes down the whole page, so the
+	# limit meant to protect the dashboard was breaking it for ordinary use.
 	rate_limit {
+		# Immutable, content-hashed build output. Cheap to serve, pointless to
+		# ration, and the thing that breaks catastrophically when refused.
+		zone assets {
+			match {
+				path /_next/static/*
+			}
+			key {remote_host}
+			events 500
+			window 1s
+		}
+		# The API is where scraping would actually cost something. Still capped,
+		# just above what one page load needs.
 		zone api {
 			match {
 				path /api/*
 			}
 			key {remote_host}
-			events 10
+			events 30
 			window 1s
 		}
 		zone general {
 			key {remote_host}
-			events 30
+			events 120
 			window 1s
 		}
 	}
