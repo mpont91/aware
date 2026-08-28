@@ -37,7 +37,9 @@ WORKDIR /app
 COPY --from=builder /build/${SERVICE}/target/*.jar app.jar
 
 # Environment defaults
-ENV JAVA_OPTS="-Xmx512m -Xms256m"
+# Overridden per service in compose. A percentage rather than a fixed -Xmx,
+# so the heap follows whatever mem_limit the container is given.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
 ENV SPRING_PROFILES_ACTIVE=production
 
 EXPOSE 8080

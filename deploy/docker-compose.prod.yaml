@@ -90,7 +90,15 @@ services:
       POLYMARKET_PASSPHRASE: ${POLYMARKET_PASSPHRASE}
       POLYMARKET_PRIVATE_KEY: ${POLYMARKET_PRIVATE_KEY}
       HFT_MODE: ${HFT_MODE:-PAPER}
-      JAVA_OPTS: "-Xmx1g -Xms512m"
+      # Sized from the container limit, not fixed. A hardcoded -Xmx above
+      # mem_limit lets the JVM grow past the cgroup ceiling: it never sees
+      # memory pressure, so it does not collect, and the kernel throttles the
+      # container instead. The strategy service ran -Xmx2g -Xms1g inside 640m
+      # and spent a night at 88% of its limit with GC thrashing — health checks
+      # and JDBC connection acquisition both timing out, and no order recorded
+      # for seven hours. MaxRAMPercentage reads the cgroup, so setting mem_limit
+      # is enough and the two cannot drift apart again.
+      JAVA_OPTS: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
     ports:
       - "127.0.0.1:${EXECUTOR_PORT:-8080}:8080"
     healthcheck:
@@ -107,7 +115,7 @@ services:
       args:
         SERVICE: strategy-service
     container_name: aware-strategy
-    mem_limit: 640m
+    mem_limit: 1g   # busiest of the three: six mirror funds plus GABAGOOL
     depends_on:
       executor:
         condition: service_healthy
@@ -121,7 +129,15 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
       EXECUTOR_BASE_URL: http://executor:8080
       HFT_MODE: ${HFT_MODE:-PAPER}
-      JAVA_OPTS: "-Xmx2g -Xms1g"
+      # Sized from the container limit, not fixed. A hardcoded -Xmx above
+      # mem_limit lets the JVM grow past the cgroup ceiling: it never sees
+      # memory pressure, so it does not collect, and the kernel throttles the
+      # container instead. The strategy service ran -Xmx2g -Xms1g inside 640m
+      # and spent a night at 88% of its limit with GC thrashing — health checks
+      # and JDBC connection acquisition both timing out, and no order recorded
+      # for seven hours. MaxRAMPercentage reads the cgroup, so setting mem_limit
+      # is enough and the two cannot drift apart again.
+      JAVA_OPTS: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
     ports:
       - "127.0.0.1:${STRATEGY_PORT:-8081}:8081"
     healthcheck:
@@ -150,7 +166,15 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
-      JAVA_OPTS: "-Xmx1g -Xms512m"
+      # Sized from the container limit, not fixed. A hardcoded -Xmx above
+      # mem_limit lets the JVM grow past the cgroup ceiling: it never sees
+      # memory pressure, so it does not collect, and the kernel throttles the
+      # container instead. The strategy service ran -Xmx2g -Xms1g inside 640m
+      # and spent a night at 88% of its limit with GC thrashing — health checks
+      # and JDBC connection acquisition both timing out, and no order recorded
+      # for seven hours. MaxRAMPercentage reads the cgroup, so setting mem_limit
+      # is enough and the two cannot drift apart again.
+      JAVA_OPTS: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
     ports:
       - "127.0.0.1:${INGESTOR_PORT:-8083}:8083"
     healthcheck:

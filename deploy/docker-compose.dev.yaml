@@ -68,7 +68,7 @@ services:
       CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/polybot
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
       HFT_MODE: PAPER
-      JAVA_OPTS: "-Xmx512m -Xms256m"
+      JAVA_OPTS: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
@@ -89,7 +89,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
       EXECUTOR_BASE_URL: http://executor:8080
       HFT_MODE: PAPER
-      JAVA_OPTS: "-Xmx1g -Xms512m"
+      JAVA_OPTS: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
     ports:
       - "127.0.0.1:8081:8081"
     restart: unless-stopped
@@ -108,7 +108,7 @@ services:
       SPRING_PROFILES_ACTIVE: develop
       CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/polybot
       KAFKA_BOOTSTRAP_SERVERS: redpanda:29092
-      JAVA_OPTS: "-Xmx512m -Xms256m"
+      JAVA_OPTS: "-XX:MaxRAMPercentage=65 -XX:InitialRAMPercentage=30"
     ports:
       - "127.0.0.1:8083:8083"
     restart: unless-stopped
