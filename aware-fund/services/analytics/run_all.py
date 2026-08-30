@@ -924,7 +924,26 @@ def main():
                        help='Seconds between P&L refreshes inside a cycle (default: 300)')
     args = parser.parse_args()
 
-    ch_client = get_clickhouse_client()
+    # Wait for ClickHouse rather than dying if it is not up yet. Restarting it
+    # takes a couple of minutes, and this process exited on the first refused
+    # connection and was restarted by Docker into the same refusal — eighteen
+    # times during one ClickHouse restart today. Retrying turns a dependency
+    # blip into a pause instead of a crash loop.
+    ch_client = None
+    for attempt in range(1, 31):
+        try:
+            ch_client = get_clickhouse_client()
+            ch_client.query("SELECT 1")
+            break
+        except Exception as e:
+            wait = min(30, 2 * attempt)
+            logger.warning(
+                "ClickHouse not reachable (attempt %d): %s — retrying in %ds",
+                attempt, e, wait)
+            time.sleep(wait)
+    if ch_client is None:
+        logger.error("ClickHouse never became reachable; giving up")
+        return 1
 
     if args.continuous:
         logger.info(

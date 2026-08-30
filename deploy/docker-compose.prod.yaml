@@ -43,7 +43,10 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: aware-clickhouse
-    mem_limit: 1500m
+    mem_limit: 2560m   # baseline is ~1.2G with 299 tables, MVs and Kafka
+    # consumers; ClickHouse takes 90% of this as its own ceiling, so 1500m
+    # left barely 100M for query working memory and the P&L job hit the
+    # wall on a normal run. 2560m leaves about a gigabyte to work in.
     depends_on:
       redpanda:
         condition: service_healthy
