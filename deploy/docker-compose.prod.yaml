@@ -56,8 +56,12 @@ services:
       # container after editing this file — a file mount pins the container to
       # an inode that git replaces.
       - ../analytics-service/clickhouse/users.d/network-access.xml:/etc/clickhouse-server/users.d/network-access.xml:ro
-      # config.d has no such conflict; nothing in the image writes there.
-      - ../analytics-service/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+      # Also a single file, and for a sharper reason: the image ships its own
+      # config.d/docker_related_config.xml, which is what sets listen_host so
+      # ClickHouse accepts connections from outside the container. Mounting the
+      # directory hides it — the server then listens on localhost only, its own
+      # client still works, and every other container gets connection refused.
+      - ../analytics-service/clickhouse/config.d/keep-alive.xml:/etc/clickhouse-server/config.d/keep-alive.xml:ro
       - clickhouse_data:/var/lib/clickhouse
     environment:
       CLICKHOUSE_DB: polybot
