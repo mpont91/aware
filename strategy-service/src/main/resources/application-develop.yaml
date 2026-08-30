@@ -1,4 +1,22 @@
 spring:
+  threads:
+    virtual:
+      # Off for this service, overriding polybot-common.yaml.
+      #
+      # On JDK 21 a virtual thread that enters a synchronized block pins its
+      # carrier until it leaves (JEP 491 lifts this, in 24). HikariCP and the
+      # ClickHouse JDBC driver both synchronize on the connection path, and this
+      # service does blocking JDBC in a one-second loop across six funds. With
+      # four carriers on this host, a handful of concurrent borrows pins every
+      # one of them and everything else running on a virtual thread starves:
+      # the scheduled tasks, the HTTP endpoints, and the arbitrage engine, which
+      # touches no database at all.
+      #
+      # That is the shape of both outages — the service traded for three
+      # minutes after a restart and then went silent for hours while its
+      # container reported "Up" and its health endpoint never answered. Platform
+      # threads with a sized pool are the right tool for a blocking workload.
+      enabled: false
   task:
     scheduling:
       pool:
