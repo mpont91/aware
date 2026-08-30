@@ -49,10 +49,14 @@ services:
         condition: service_healthy
     volumes:
       - ../analytics-service/clickhouse/init:/docker-entrypoint-initdb.d:ro
-      # Directories, not single files. Bind-mounting one file pins the
-      # container to that inode, and git replaces files rather than editing
-      # them, so edits after the container was created never arrive.
-      - ../analytics-service/clickhouse/users.d:/etc/clickhouse-server/users.d:ro
+      # users.d stays a single-file mount: the image's entrypoint writes
+      # default-user.xml into that directory on every start, so mounting the
+      # directory read-only stops the container booting, and mounting it
+      # writable would drop a generated file into the repository. Recreate the
+      # container after editing this file — a file mount pins the container to
+      # an inode that git replaces.
+      - ../analytics-service/clickhouse/users.d/network-access.xml:/etc/clickhouse-server/users.d/network-access.xml:ro
+      # config.d has no such conflict; nothing in the image writes there.
       - ../analytics-service/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
       - clickhouse_data:/var/lib/clickhouse
     environment:
