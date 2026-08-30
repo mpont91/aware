@@ -1,9 +1,36 @@
 spring:
+  task:
+    scheduling:
+      pool:
+        # Spring schedules on a single thread by default, so one blocked JDBC
+        # call stopped the mirror funds AND the arbitrage engine — which is how
+        # a stale connection pool took the whole service down for 41 hours.
+        # Enough threads that a stalled fund poll costs that poll alone.
+        size: 8
   datasource:
     url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123/polybot}
     driver-class-name: ${CLICKHOUSE_DRIVER:com.clickhouse.jdbc.ClickHouseDriver}
     username: ${CLICKHOUSE_USER:default}
     password: ${CLICKHOUSE_PASSWORD:}
+    hikari:
+      # ClickHouse hangs up on an idle connection after keep_alive_timeout. The
+      # pool has to retire its connections before that happens, or it hands out
+      # dead handles and every borrow blocks for the full timeout. These sit
+      # under the 60s the server now allows.
+      max-lifetime: 45000
+      keepalive-time: 30000
+      idle-timeout: 20000
+      minimum-idle: 2
+      maximum-pool-size: 15
+      # Fail in five seconds rather than thirty. A borrow that blocks is a
+      # scheduled task that blocks, and the point is to lose one poll rather
+      # than wedge the service.
+      connection-timeout: 5000
+      validation-timeout: 3000
+      connection-test-query: SELECT 1
+      # Say so in the log when a connection is held far too long, instead of
+      # leaving an exhausted pool to be inferred from its symptoms.
+      leak-detection-threshold: 60000
 
 hft:
   mode: PAPER

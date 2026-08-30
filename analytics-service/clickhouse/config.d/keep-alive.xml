@@ -1,0 +1,18 @@
+<clickhouse>
+    <!--
+      ClickHouse closes an idle HTTP connection after keep_alive_timeout, which
+      defaults to 10 seconds. Every client here is a pooled one, and a pool
+      keeps connections far longer than that: HikariCP holds an idle connection
+      for ten minutes by default and does not learn that the far end hung up.
+
+      The result was a pool full of dead handles. Each borrow blocked for the
+      full 30 second connection timeout and failed, and because Spring runs
+      scheduled tasks on a single thread by default, one blocked borrow stalled
+      every scheduled task in the service — the mirror funds and the arbitrage
+      engine alike. The strategy service sat idle for 41 hours with every
+      container reporting "Up".
+
+      A minute gives the pool room to recycle connections on its own terms.
+    -->
+    <keep_alive_timeout>60</keep_alive_timeout>
+</clickhouse>

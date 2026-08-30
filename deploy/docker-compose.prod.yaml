@@ -49,7 +49,11 @@ services:
         condition: service_healthy
     volumes:
       - ../analytics-service/clickhouse/init:/docker-entrypoint-initdb.d:ro
-      - ../analytics-service/clickhouse/users.d/network-access.xml:/etc/clickhouse-server/users.d/network-access.xml:ro
+      # Directories, not single files. Bind-mounting one file pins the
+      # container to that inode, and git replaces files rather than editing
+      # them, so edits after the container was created never arrive.
+      - ../analytics-service/clickhouse/users.d:/etc/clickhouse-server/users.d:ro
+      - ../analytics-service/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
       - clickhouse_data:/var/lib/clickhouse
     environment:
       CLICKHOUSE_DB: polybot

@@ -136,17 +136,23 @@ def check_and_notify(results: dict, ch_client) -> dict:
     now = datetime.now(timezone.utc)
 
     # New, or quiet long enough to say again.
-    to_report = [
-        message for key, message in current.items()
+    # Keys, not messages. This kept the pair as (key, message) because the
+    # bookkeeping below matched a key against a list of messages, which is never
+    # true — so the timestamp was written once and never refreshed, and past the
+    # repeat interval every cycle reported again. The engine being down produced
+    # an hourly message for two days instead of one every six hours.
+    due = [
+        (key, message) for key, message in current.items()
         if key not in _last_reported or now - _last_reported[key] >= REPEAT_AFTER
     ]
     recovered = [key for key in list(_last_reported) if key not in current]
 
-    for key in current:
-        if key in to_report or key not in _last_reported:
-            _last_reported[key] = now
+    for key, _ in due:
+        _last_reported[key] = now
     for key in recovered:
         _last_reported.pop(key, None)
+
+    to_report = [message for _, message in due]
 
     if to_report:
         body = "\n".join(f"• {m}" for m in to_report)
