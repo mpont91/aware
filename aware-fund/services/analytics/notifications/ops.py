@@ -72,8 +72,50 @@ def _collect_failed_jobs(results: dict) -> list[tuple[str, str]]:
     return problems
 
 
+# Below this many copyable constituent trades in the window, silence from the
+# funds is the market being quiet rather than the engine being stuck. Polymarket
+# volume is event-driven and swings hard: the platform went from 5,800 trades an
+# hour overnight to 340 by the morning, and in one 90-minute stretch the traders
+# we mirror made five trades between them. Alerting on that is crying wolf.
+MIN_COPYABLE_TO_ALERT = int(os.getenv('OPS_ALERT_MIN_COPYABLE', '10'))
+
+# Roughly the size a constituent trade needs for a fund's share of it to clear
+# min-trade-usd once it has been scaled down.
+COPYABLE_NOTIONAL_USD = 30
+
+
+def _copyable_trades(ch_client, minutes: float) -> Optional[int]:
+    """
+    Constituent trades big enough to act on, over the given window.
+
+    Counted on ingested_at rather than ts, because that is when the engine
+    could first have seen them. Mirrored indices only: PSI-ALL exists for the
+    leaderboard and no fund copies it, so counting it overstates what the funds
+    ever had the chance to do.
+    """
+    try:
+        rows = ch_client.query("""
+            WITH mirrored AS (
+                SELECT DISTINCT proxy_address
+                FROM polybot.aware_psi_index FINAL
+                WHERE index_type IN ('PSI-10','PSI-25','PSI-CRYPTO',
+                                     'PSI-POLITICS','PSI-SPORTS','PSI-ALPHA')
+            )
+            SELECT count()
+            FROM polybot.aware_global_trades t
+            INNER JOIN mirrored m ON t.proxy_address = m.proxy_address
+            WHERE t.ingested_at > now() - INTERVAL %(minutes)s MINUTE
+              AND t.notional >= %(floor)s
+        """, parameters={'minutes': int(minutes),
+                         'floor': COPYABLE_NOTIONAL_USD}).result_rows
+        return int(rows[0][0]) if rows else None
+    except Exception as e:
+        logger.error(f"Could not count copyable trades: {e}")
+        return None
+
+
 def _collect_engine_stalls(ch_client) -> list[tuple[str, str]]:
-    """Whether orders and fills are still happening."""
+    """Whether orders and fills are still happening, when they should be."""
     problems = []
 
     def age_minutes(query: str) -> Optional[float]:
@@ -93,16 +135,28 @@ def _collect_engine_stalls(ch_client) -> list[tuple[str, str]]:
         "SELECT max(executed_at) FROM polybot.aware_fund_executions")
     fill_age = age_minutes("SELECT max(ts) FROM polybot.user_trades")
 
-    if execution_age is not None and execution_age > STALL_MINUTES:
-        problems.append((
-            'engine:executions',
-            f'No fund order recorded for {_fmt_age(execution_age)}',
-        ))
-    if fill_age is not None and fill_age > STALL_MINUTES:
-        problems.append((
-            'engine:fills',
-            f'No simulated fill for {_fmt_age(fill_age)}',
-        ))
+    stalled = [
+        ('engine:executions', 'No fund order recorded', execution_age),
+        ('engine:fills', 'No simulated fill', fill_age),
+    ]
+    stalled = [(k, m, a) for k, m, a in stalled
+               if a is not None and a > STALL_MINUTES]
+    if not stalled:
+        return problems
+
+    # Only a fault if there was something to act on. Asked once, over the
+    # longest stalled window, so a quiet market costs one query.
+    window = max(age for _, _, age in stalled)
+    copyable = _copyable_trades(ch_client, window)
+    if copyable is not None and copyable < MIN_COPYABLE_TO_ALERT:
+        logger.info(
+            "Funds quiet for %s but only %d copyable trades in that window; "
+            "market is idle, not the engine", _fmt_age(window), copyable)
+        return problems
+
+    detail = "" if copyable is None else f", {copyable} trades were copyable"
+    for key, message, age in stalled:
+        problems.append((key, f'{message} for {_fmt_age(age)}{detail}'))
     return problems
 
 
