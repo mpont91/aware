@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { SkeletonRows } from '@/components/ui/Loading'
 import {
   CONSENSUS_LOOKBACK_HOURS,
   CONSENSUS_MIN_TRADERS,
@@ -70,7 +71,7 @@ export function ConsensusAlerts() {
       {/* Signals List */}
       <div className="divide-y divide-slate-800">
         {isLoading ? (
-          <p className="p-4 text-sm text-slate-500">Loading…</p>
+          <SkeletonRows rows={3} />
         ) : signals.length === 0 ? (
           <p className="p-4 text-sm text-slate-500">
             No consensus signals yet. They appear once several high-scoring

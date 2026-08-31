@@ -13,6 +13,7 @@ import {
   AreaChart,
 } from 'recharts'
 import { Loader2 } from 'lucide-react'
+import { SkeletonChart } from '@/components/ui/Loading'
 import { apiDate, cn, formatCurrency } from '@/lib/utils'
 import { api, FundPnlHistory } from '@/lib/api'
 
@@ -110,13 +111,11 @@ export function FundPnlChart({
   }
 
   if (isLoading) {
+    // Bars at the chart's own height: the card keeps its size, so the page
+    // below does not jump when the series arrives.
     return (
-      <div
-        className={cn('flex items-center justify-center bg-slate-900/50 rounded-xl', className)}
-        style={{ height }}
-      >
-        <Loader2 className="w-6 h-6 text-aware-400 animate-spin" />
-        <span className="ml-2 text-slate-400">Loading chart...</span>
+      <div className={cn('space-y-4', className)}>
+        <SkeletonChart height={height} />
       </div>
     )
   }

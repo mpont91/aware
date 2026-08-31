@@ -2,6 +2,7 @@
 
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import { usePnlSummary } from '@/lib/hooks'
+import { Skeleton } from '@/components/ui/Loading'
 
 /**
  * Headline P&L. This is a single number people come to read, so it is a hero
@@ -16,10 +17,35 @@ export function PnlBanner() {
   const label = isLive ? 'LIVE TRADING' : 'PAPER TRADING'
 
   if (isLoading) {
+    // Shaped like the banner it replaces — badge, headline figure, and the
+    // realized/unrealized pair — so nothing shifts when the numbers arrive.
     return (
       <div className="rounded-2xl bg-slate-900/50 border border-slate-800 p-6">
-        <div className="h-24 flex items-center">
-          <p className="text-slate-500">Loading P&amp;L…</p>
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <Skeleton className="h-5 w-32 mb-3" />
+            <Skeleton className="h-10 w-52" />
+            <div className="flex gap-6 mt-3">
+              <div className="space-y-1">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+              <div className="space-y-1">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-8">
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-6 w-24" />
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-6 w-24" />
+            </div>
+          </div>
         </div>
       </div>
     )

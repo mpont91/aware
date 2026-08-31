@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { SkeletonStatCard, SkeletonText } from '@/components/ui/Loading'
 import Link from 'next/link'
 import {
   TrendingUp,
@@ -95,7 +96,7 @@ export default function DashboardPage() {
           ) : (
             <Activity className="w-4 h-4" />
           )}
-          {isLoading ? 'Loading...' : 'Last updated: just now'}
+          {isLoading ? <SkeletonText width="w-32" className="h-3" /> : 'Last updated: just now'}
         </div>
       </div>
 
@@ -114,6 +115,18 @@ export default function DashboardPage() {
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {isLoading ? (
+          <>
+            {/* Placeholders rather than the zeros these default to: a figure
+                showing 0 while its request is in flight cannot be told apart
+                from one that is genuinely 0. */}
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+          </>
+        ) : (
+        <>
         <StatsCard
           title="Tracked Traders"
           value={formatNumber(displayStats.total_traders, 0)}
@@ -140,6 +153,8 @@ export default function DashboardPage() {
           icon={TrendingUp}
           description="Last 24 hours"
         />
+        </>
+        )}
       </div>
 
       {/* Headline P&L */}
@@ -187,9 +202,14 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="text-sm text-slate-500">
-              {isLoading ? 'Loading...' : 'Not available'}
-            </div>
+            isLoading ? (
+              <div className="space-y-2">
+                <SkeletonText width="w-20" className="h-5" />
+                <SkeletonText width="w-40" className="h-3" />
+              </div>
+            ) : (
+              <div className="text-sm text-slate-500">Not available</div>
+            )
           )}
         </div>
       </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { SkeletonRows } from '@/components/ui/Loading'
 import Link from 'next/link'
 import { Trophy, ExternalLink, TrendingUp, TrendingDown, Loader2 } from 'lucide-react'
 import { cn, formatCurrency, formatNumber } from '@/lib/utils'
@@ -63,13 +64,9 @@ export function TopTraders() {
         </Link>
       </div>
 
-      {/* Loading State */}
-      {isLoading && (
-        <div className="p-8 flex items-center justify-center">
-          <Loader2 className="h-6 w-6 text-aware-400 animate-spin" />
-          <span className="ml-2 text-slate-400 text-sm">Loading...</span>
-        </div>
-      )}
+      {/* Rows shaped like the trader list, so the table does not resize
+          under the reader when the data lands. */}
+      {isLoading && <SkeletonRows rows={5} />}
 
       {/* Error State */}
       {error && !isLoading && (

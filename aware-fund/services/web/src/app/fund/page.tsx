@@ -27,6 +27,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts'
+import { Skeleton, SkeletonChart, SkeletonStatCard } from '@/components/ui/Loading'
 import { apiDate, cn, formatCurrency, formatNumber, formatPercent } from '@/lib/utils'
 import { FundPnlChart } from '@/components/fund/FundPnlChart'
 import { api, FundComparison } from '@/lib/api'
@@ -277,9 +278,17 @@ function FundPageContent() {
 
   if (fundTypes === null) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 text-aware-400 animate-spin" />
-        <span className="ml-3 text-slate-400">Loading funds...</span>
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-52" />
+          <Skeleton className="h-4 w-72" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+        </div>
       </div>
     )
   }
@@ -402,9 +411,24 @@ function FundPageContent() {
 
       {/* Loading State */}
       {isLoading && (
-        <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-12 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 text-aware-400 animate-spin" />
-          <span className="ml-3 text-slate-400">Loading fund data...</span>
+        <div className="space-y-6">
+          {/* The hero figure, the four stat tiles and the chart, in the same
+              places they occupy once loaded, so nothing moves. */}
+          <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
+            <Skeleton className="h-4 w-28 mb-3" />
+            <Skeleton className="h-10 w-48" />
+            <Skeleton className="h-3 w-64 mt-3" />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+            <SkeletonStatCard />
+          </div>
+          <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
+            <Skeleton className="h-5 w-32 mb-4" />
+            <SkeletonChart height={300} />
+          </div>
         </div>
       )}
 
@@ -881,9 +905,17 @@ function FundPageContent() {
 export default function FundPage() {
   return (
     <Suspense fallback={
-      <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-12 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 text-aware-400 animate-spin" />
-        <span className="ml-3 text-slate-400">Loading fund details...</span>
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-52" />
+          <Skeleton className="h-4 w-72" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+        </div>
       </div>
     }>
       <FundPageContent />

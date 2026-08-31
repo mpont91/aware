@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Activity, ArrowUpRight, ArrowDownRight, Loader2 } from 'lucide-react'
+import { SkeletonRows } from '@/components/ui/Loading'
 import { apiDate, cn, formatCurrency, getTimeAgo } from '@/lib/utils'
 import { api, RecentTrade, traderName } from '@/lib/api'
 
@@ -104,6 +105,10 @@ export function RecentActivity() {
             {error}
           </div>
         )}
+
+        {/* On first load only: a refresh keeps the rows on screen and swaps
+            them underneath, so the feed does not blink every thirty seconds. */}
+        {isLoading && activities.length === 0 && <SkeletonRows rows={4} />}
 
         {!error && activities.length === 0 && !isLoading && (
           <div className="p-4 text-center text-sm text-slate-500">

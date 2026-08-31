@@ -13,6 +13,7 @@ import {
 import { LineChart as LineChartIcon } from 'lucide-react'
 import { usePnlHistory } from '@/lib/hooks'
 import { apiDate } from '@/lib/utils'
+import { SkeletonChart } from '@/components/ui/Loading'
 
 /**
  * Categorical hues, assigned in fixed order and never cycled, so a strategy
@@ -67,7 +68,7 @@ export function StrategyPerformance() {
 
       <div className="p-5">
         {isLoading ? (
-          <p className="text-sm text-slate-500 py-12 text-center">Loading…</p>
+          <SkeletonChart height={256} />
         ) : error ? (
           <p className="text-sm text-slate-500 py-12 text-center">{error}</p>
         ) : points.length < 2 ? (

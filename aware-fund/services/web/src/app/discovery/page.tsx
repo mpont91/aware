@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { SkeletonRows } from '@/components/ui/Loading'
 import Link from 'next/link'
 import {
   Sparkles,
@@ -260,9 +261,8 @@ export default function DiscoveryPage() {
 
       {/* Loading State */}
       {isLoading && (
-        <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-12 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 text-aware-400 animate-spin" />
-          <span className="ml-3 text-slate-400">Discovering hidden gems...</span>
+        <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
+          <SkeletonRows rows={4} />
         </div>
       )}
 

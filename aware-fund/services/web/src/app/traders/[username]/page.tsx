@@ -15,6 +15,7 @@ import {
   Shield,
   Loader2,
 } from 'lucide-react'
+import { Skeleton, SkeletonChart, SkeletonRows } from '@/components/ui/Loading'
 import { apiDate, cn, formatCurrency, formatNumber, getTimeAgo } from '@/lib/utils'
 import {
   AreaChart,
@@ -138,9 +139,35 @@ export default function TraderProfilePage() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 text-aware-400 animate-spin" />
-        <span className="ml-3 text-slate-400">Loading trader profile...</span>
+      <div className="space-y-6">
+        <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
+          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+            <div className="flex items-start gap-4">
+              <Skeleton className="w-20 h-20 rounded-2xl" />
+              <div className="space-y-2">
+                <Skeleton className="h-7 w-44" />
+                <Skeleton className="h-4 w-56" />
+                <Skeleton className="h-4 w-40" />
+              </div>
+            </div>
+            <div className="flex gap-6">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="space-y-2">
+                  <Skeleton className="h-8 w-20" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="rounded-lg bg-slate-800/50 p-4 space-y-2">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-6 w-12" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -324,7 +351,9 @@ function PnlCurveCard({
       caption="Settled markets only. Open positions are estimates and live in the Positions tab."
     >
       {pending ? (
-        <Empty title="Loading…" />
+        <div className="p-5">
+          <SkeletonChart height={256} />
+        </div>
       ) : points.length < 2 ? (
         <Empty
           title="Not enough settled history yet"
@@ -416,7 +445,14 @@ function CategoryCard({
   return (
     <Panel title="Category breakdown" caption="Share of traded volume, by market category.">
       {pending ? (
-        <Empty title="Loading…" />
+        <div className="p-5 flex items-center gap-8">
+          <Skeleton className="w-40 h-40 rounded-full shrink-0" />
+          <div className="flex-1 space-y-3">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-4 w-full" />
+            ))}
+          </div>
+        </div>
       ) : slices.length === 0 ? (
         <Empty title="No trades recorded for this wallet yet" />
       ) : (
@@ -496,7 +532,7 @@ function PositionsCard({
       caption={`Net shares held in markets that have not resolved, marked to the last trade on each token. Positions with no trade in ${hours}h are left unpriced.`}
     >
       {pending ? (
-        <Empty title="Loading…" />
+        <SkeletonRows rows={3} />
       ) : positions.length === 0 ? (
         <Empty
           title="No open positions"
@@ -571,7 +607,7 @@ function HistoryCard({
   return (
     <Panel title="Recent trades" caption="Latest fills observed on Polymarket for this wallet.">
       {pending ? (
-        <Empty title="Loading…" />
+        <SkeletonRows rows={5} />
       ) : trades.length === 0 ? (
         <Empty title="No trades recorded for this wallet yet" />
       ) : (

@@ -1,6 +1,7 @@
 'use client'
 
 import { Database, Menu } from 'lucide-react'
+import { Skeleton } from '@/components/ui/Loading'
 import { cn } from '@/lib/utils'
 import { useDataFreshness } from '@/lib/hooks'
 
@@ -103,9 +104,15 @@ export function Header({ onMenuClick }: HeaderProps) {
                   statusStyles.dot
                 )} />
               </span>
-              <span className={cn("text-xs font-medium", statusStyles.text)}>
-                {statusStyles.label}
-              </span>
+              {/* A placeholder rather than the word "Loading": the pill reads
+                  as a status, and "Loading" is not one of them. */}
+              {freshnessLoading ? (
+                <Skeleton className="h-3 w-14" />
+              ) : (
+                <span className={cn("text-xs font-medium", statusStyles.text)}>
+                  {statusStyles.label}
+                </span>
+              )}
             </div>
 
             {/* Tooltip on hover */}
