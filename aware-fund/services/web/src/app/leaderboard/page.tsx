@@ -16,7 +16,7 @@ import {
   Calculator,
 } from 'lucide-react'
 import { cn, formatCurrency, formatNumber } from '@/lib/utils'
-import { api, Trader, traderName, traderInitial } from '@/lib/api'
+import { api, LeaderboardSummary, Trader, traderName, traderInitial } from '@/lib/api'
 import { MLScoreInline } from '@/components/traders/MLScoreBadge'
 
 const tiers = ['All', 'Diamond', 'Gold', 'Silver', 'Bronze']
@@ -42,6 +42,20 @@ export default function LeaderboardPage() {
   const [selectedTier, setSelectedTier] = useState('All')
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'smart_money_score' | 'total_pnl' | 'win_rate' | 'sharpe_ratio'>('smart_money_score')
+  const [summary, setSummary] = useState<LeaderboardSummary | null>(null)
+
+  // Counts and totals over every scored trader. Kept apart from the row fetch
+  // on purpose: the rows are a filtered page of at most a hundred, and deriving
+  // the counts from them is what made picking Gold report "Gold (100),
+  // Silver (0)" regardless of the real distribution.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getLeaderboardSummary()
+      .then((d) => { if (!cancelled) setSummary(d) })
+      .catch(() => { if (!cancelled) setSummary(null) })
+    return () => { cancelled = true }
+  }, [])
 
   // Fetch data from API
   useEffect(() => {
@@ -63,15 +77,24 @@ export default function LeaderboardPage() {
 
   // Filter and sort locally
   const filteredTraders = traders
-    .filter((t) => t.username.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter((t) => {
+      // Matched against the name actually shown and the wallet: almost no
+      // account sets a username, so searching that alone matched nothing.
+      const q = searchQuery.trim().toLowerCase()
+      if (!q) return true
+      return [t.username, t.pseudonym, t.proxy_address]
+        .some((v) => (v || '').toLowerCase().includes(q))
+    })
     .sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0))
 
   // Calculate stats
+  // Over every scored trader, not the page on screen — otherwise the headline
+  // totals changed every time a tier was selected.
   const stats = {
-    diamondCount: traders.filter((t) => t.tier.toUpperCase() === 'DIAMOND').length,
-    totalPnl: traders.reduce((sum, t) => sum + (t.total_pnl || 0), 0),
-    avgWinRate: traders.length > 0 ? traders.reduce((sum, t) => sum + (t.win_rate || 0), 0) / traders.length : 0,
-    totalTrades: traders.reduce((sum, t) => sum + (t.total_trades || 0), 0),
+    diamondCount: summary?.tier_counts.DIAMOND ?? 0,
+    totalPnl: summary?.total_pnl ?? 0,
+    avgWinRate: summary?.avg_win_rate ?? 0,
+    totalTrades: summary?.total_trades ?? 0,
   }
 
   return (
@@ -115,9 +138,11 @@ export default function LeaderboardPage() {
             )}
           >
             {tier}
-            {tier !== 'All' && traders.length > 0 && (
+            {tier !== 'All' && summary && (
               <span className="ml-2 text-xs text-slate-500">
-                ({traders.filter((t) => t.tier.toUpperCase() === tier.toUpperCase()).length})
+                ({summary.tier_counts[
+                  tier.toUpperCase() as keyof typeof summary.tier_counts
+                ] ?? 0})
               </span>
             )}
           </button>

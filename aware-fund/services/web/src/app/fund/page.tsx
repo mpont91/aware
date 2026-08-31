@@ -786,7 +786,15 @@ function FundPageContent() {
                 ) : (
                   <div className="divide-y divide-slate-800 max-h-96 overflow-y-auto">
                     {constituents.map((c, i) => (
-                      <div key={c.rank} className="p-4 hover:bg-slate-800/30 flex items-center justify-between">
+                      // Linked to the same profile the leaderboard opens.
+                      // These were plain rows, so the only way to look up a
+                      // trader the fund actually copies was to find them again
+                      // on the leaderboard.
+                      <Link
+                        key={c.rank}
+                        href={`/traders/${c.proxy_address}`}
+                        className="p-4 hover:bg-slate-800/30 flex items-center justify-between transition-colors"
+                      >
                         <div className="flex items-center gap-3">
                           <span className="text-slate-500 font-medium w-6">{i + 1}</span>
                           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white text-sm font-bold">
@@ -805,7 +813,7 @@ function FundPageContent() {
                             Score: {c.total_score.toFixed(0)}
                           </p>
                         </div>
-                      </div>
+                      </Link>
                     ))}
                   </div>
                 )}

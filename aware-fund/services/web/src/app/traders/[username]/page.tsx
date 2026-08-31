@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   TrendingUp,
@@ -99,6 +99,41 @@ function foldCategories(categories: TraderCategory[]) {
   return slices
 }
 
+/**
+ * Goes back where the reader came from.
+ *
+ * This said "Back to Leaderboard" and linked there unconditionally, which was
+ * wrong the moment a trader could be opened from a fund's constituent list.
+ * History knows the answer; the leaderboard is the fallback for anyone who
+ * arrived at the URL directly.
+ */
+function BackLink() {
+  const router = useRouter()
+  const [canGoBack, setCanGoBack] = useState(false)
+
+  useEffect(() => {
+    setCanGoBack(typeof window !== 'undefined' && window.history.length > 1)
+  }, [])
+
+  const className =
+    'inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors'
+
+  if (canGoBack) {
+    return (
+      <button type="button" onClick={() => router.back()} className={className}>
+        <ArrowLeft className="h-4 w-4" />
+        Back
+      </button>
+    )
+  }
+  return (
+    <Link href="/leaderboard" className={className}>
+      <ArrowLeft className="h-4 w-4" />
+      Back to Leaderboard
+    </Link>
+  )
+}
+
 export default function TraderProfilePage() {
   const params = useParams()
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'history'>('overview')
@@ -175,13 +210,7 @@ export default function TraderProfilePage() {
   if (error || !trader) {
     return (
       <div className="space-y-6">
-        <Link
-          href="/leaderboard"
-          className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Leaderboard
-        </Link>
+        <BackLink />
         <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-6">
           <p className="text-red-400 font-medium">{error || 'Trader not found'}</p>
         </div>
@@ -194,13 +223,7 @@ export default function TraderProfilePage() {
 
   return (
     <div className="space-y-6">
-      <Link
-        href="/leaderboard"
-        className="inline-flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to Leaderboard
-      </Link>
+      <BackLink />
 
       {/* Profile Header */}
       <div className="rounded-xl bg-slate-900/50 border border-slate-800 p-6">
@@ -296,7 +319,12 @@ export default function TraderProfilePage() {
         </div>
       )}
 
-      {activeTab === 'positions' && <PositionsCard activity={activity} pending={pending} />}
+      {activeTab === 'positions' && (
+        <div className="space-y-6">
+          <PositionsCard activity={activity} pending={pending} />
+          <SettledCard activity={activity} pending={pending} />
+        </div>
+      )}
 
       {activeTab === 'history' && <HistoryCard activity={activity} pending={pending} />}
     </div>
@@ -587,6 +615,83 @@ function PositionsCard({
                 )}
                 <p className="text-xs text-slate-500">Unrealized</p>
               </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  )
+}
+
+function SettledCard({
+  activity,
+  pending,
+}: {
+  activity: TraderActivity | null
+  pending: boolean
+}) {
+  const settled = activity?.settled_positions ?? []
+  const won = settled.filter((p) => p.won).length
+  const net = settled.reduce((sum, p) => sum + p.realized_pnl, 0)
+
+  return (
+    <Panel
+      title="Settled positions"
+      caption={
+        settled.length > 0
+          ? `${won} of ${settled.length} resolved in their favour · ${
+              net >= 0 ? '+' : '\u2212'
+            }${formatCurrency(Math.abs(net))} net`
+          : 'Markets this wallet held that have since resolved.'
+      }
+    >
+      {pending ? (
+        <SkeletonRows rows={4} />
+      ) : settled.length === 0 ? (
+        <Empty
+          title="Nothing has settled yet"
+          hint="Positions appear here once the market they are in resolves."
+        />
+      ) : (
+        <div className="divide-y divide-slate-800">
+          {settled.map((p) => (
+            <div
+              key={`${p.market_slug}-${p.outcome}-${p.resolved_at}`}
+              className="p-4 flex items-center gap-4"
+            >
+              {/* Won or lost is the point of this list, so it is stated in
+                  words as well as colour. */}
+              <span
+                className={cn(
+                  'px-2 py-0.5 rounded text-xs font-medium shrink-0',
+                  p.won
+                    ? 'bg-green-500/10 text-green-400'
+                    : 'bg-red-500/10 text-red-400'
+                )}
+              >
+                {p.won ? 'Won' : 'Lost'}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white truncate">{p.market_slug}</p>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span className="text-aware-400">{p.outcome}</span>
+                  <span>·</span>
+                  <span className="tabular-nums">
+                    {formatNumber(p.shares, 0)} shares @ {cents(p.avg_entry_price)}
+                  </span>
+                  <span>·</span>
+                  <span>{getTimeAgo(p.resolved_at)}</span>
+                </div>
+              </div>
+              <p
+                className={cn(
+                  'text-sm font-medium tabular-nums shrink-0',
+                  p.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                )}
+              >
+                {p.realized_pnl >= 0 ? '+' : '\u2212'}
+                {formatCurrency(Math.abs(p.realized_pnl))}
+              </p>
             </div>
           ))}
         </div>

@@ -6,6 +6,14 @@ export interface DashboardStats {
   traders_24h: number
 }
 
+export interface LeaderboardSummary {
+  tier_counts: { DIAMOND: number; GOLD: number; SILVER: number; BRONZE: number }
+  total_traders: number
+  total_pnl: number
+  avg_win_rate: number
+  total_trades: number
+}
+
 export interface Trader {
   rank: number
   username: string
@@ -67,12 +75,26 @@ export interface TraderTrade {
   notional: number
 }
 
+export interface TraderSettledPosition {
+  market_slug: string
+  outcome: string
+  shares: number
+  cost: number
+  avg_entry_price: number
+  /** Whether the outcome they held is the one that happened. */
+  won: boolean
+  realized_pnl: number
+  resolved_at: string
+  trades: number
+}
+
 export interface TraderActivity {
   proxy_address: string
   mark_max_age_hours: number
   pnl_curve: TraderPnlPoint[]
   categories: TraderCategory[]
   open_positions: TraderOpenPosition[]
+  settled_positions: TraderSettledPosition[]
   recent_trades: TraderTrade[]
 }
 
@@ -551,6 +573,10 @@ export const api = {
 
   async getPSI10(): Promise<PSIIndex> {
     return fetchJson<PSIIndex>('/api/index/psi-10')
+  },
+
+  async getLeaderboardSummary(): Promise<LeaderboardSummary> {
+    return fetchJson<LeaderboardSummary>('/api/leaderboard/summary')
   },
 
   async getLeaderboard(limit = 100, tier?: string): Promise<Trader[]> {

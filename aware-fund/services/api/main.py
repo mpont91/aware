@@ -721,6 +721,65 @@ VALID_STRATEGIES = {'UNKNOWN', 'ARBITRAGEUR', 'MARKET_MAKER', 'DIRECTIONAL_FUNDA
                     'DIRECTIONAL_MOMENTUM', 'EVENT_DRIVEN', 'SCALPER', 'HYBRID'}
 
 
+@app.get("/api/leaderboard/summary")
+@limiter.limit("100/minute")
+async def get_leaderboard_summary(request: Request):
+    """
+    Counts and totals over every scored trader, not just the page on screen.
+
+    The leaderboard derived both its tier counts and its summary tiles from the
+    rows it had loaded — at most a hundred, already filtered to the selected
+    tier. Picking Gold therefore reported "Gold (100), Silver (0)" whatever the
+    real distribution was, and picking All reported Gold (0) whenever no Gold
+    trader placed in the top hundred by score. The totals moved with the filter
+    for the same reason.
+    """
+    try:
+        client = get_clickhouse_client()
+
+        tiers = client.query("""
+            SELECT upper(tier) AS tier, count() AS n
+            FROM polybot.aware_smart_money_scores FINAL
+            GROUP BY tier
+        """).result_rows
+
+        totals = client.query("""
+            SELECT
+                count() AS traders,
+                sum(p.total_pnl) AS total_pnl,
+                -- win_rate lives on aware_trader_pnl, not the profile, and only
+                -- for traders who have had a position settle.
+                avgIf(w.win_rate, w.win_rate > 0) AS avg_win_rate,
+                sum(p.total_trades) AS total_trades
+            FROM (SELECT * FROM polybot.aware_smart_money_scores FINAL) AS s
+            LEFT JOIN (SELECT * FROM polybot.aware_trader_profiles FINAL) AS p
+                ON s.proxy_address = p.proxy_address
+            LEFT JOIN (SELECT * FROM polybot.aware_trader_pnl FINAL) AS w
+                ON s.proxy_address = w.proxy_address
+        """).result_rows
+
+        by_tier = {t: int(n) for t, n in tiers}
+        row = totals[0] if totals else (0, 0, 0, 0)
+        return {
+            'tier_counts': {
+                'DIAMOND': by_tier.get('DIAMOND', 0),
+                'GOLD': by_tier.get('GOLD', 0),
+                'SILVER': by_tier.get('SILVER', 0),
+                'BRONZE': by_tier.get('BRONZE', 0),
+            },
+            'total_traders': int(row[0] or 0),
+            'total_pnl': round(float(row[1] or 0), 2),
+            'avg_win_rate': round(float(row[2] or 0), 4),
+            'total_trades': int(row[3] or 0),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get leaderboard summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/leaderboard", response_model=list[LeaderboardEntry])
 @limiter.limit("100/minute")
 async def get_leaderboard(
@@ -1048,6 +1107,32 @@ async def get_trader_activity(
                 'priced_at': utc_iso(mark[1]) if mark else None,
             })
 
+        # ── Settled positions ───────────────────────────────────────────────
+        # Which of them the trader actually got right. The page could show what
+        # they bought and what it cost but never whether it paid: a settlement
+        # price of 1 means the outcome they held happened, 0 means it did not.
+        settled_rows = client.query("""
+            SELECT market_slug, outcome, net_shares, net_cost, avg_entry_price,
+                   settlement_price, realized_pnl, resolved_at, total_trades
+            FROM (SELECT * FROM polybot.aware_position_pnl FINAL)
+            WHERE lower(proxy_address) = %(addr)s
+              AND resolved_at > toDateTime64('1971-01-01 00:00:00', 3)
+            ORDER BY resolved_at DESC
+            LIMIT %(lim)s
+        """, parameters=params).result_rows
+
+        settled_positions = [{
+            'market_slug': r[0],
+            'outcome': r[1],
+            'shares': round(float(r[2]), 2),
+            'cost': round(float(r[3]), 2),
+            'avg_entry_price': round(float(r[4]), 4),
+            'won': float(r[5]) >= 0.5,
+            'realized_pnl': round(float(r[6]), 2),
+            'resolved_at': utc_iso(r[7]),
+            'trades': int(r[8]),
+        } for r in settled_rows]
+
         # ── Recent trades ───────────────────────────────────────────────────
         trade_rows = client.query("""
             SELECT ts, market_slug, title, outcome, side, price, size, notional
@@ -1074,6 +1159,7 @@ async def get_trader_activity(
             'pnl_curve': pnl_curve,
             'categories': categories,
             'open_positions': open_positions,
+            'settled_positions': settled_positions,
             'recent_trades': recent_trades,
         }
 
