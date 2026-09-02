@@ -7,7 +7,7 @@
 # Run 'make help' to see all available targets
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help local up down build logs status clean ssh deploy prod-up prod-down prod-logs test
+.PHONY: help local up down build logs status clean ssh deploy prod-up prod-down prod-logs prod-purge-ch-logs test
 
 # Read configuration from .env in the repo root. Optional, so targets that
 # don't need it still work on a fresh clone.
@@ -225,6 +225,24 @@ ssh: require-server ## Open a shell on the server, in the project directory
 
 deploy: require-server ## Pull and restart on the server (one command)
 	ssh $(SERVER_USER)@$(SERVER_IP) "cd $(PROJECT_PATH) && git pull && make prod-up"
+
+# Purge ClickHouse's accumulated telemetry. Only needed once, after first
+# deploying config.d/logging.xml: `remove` and a new TTL stop the tables
+# growing but do not reclaim what they already hold — ClickHouse renames the
+# old table aside instead of altering it. These hold nothing but the server's
+# own logs and query traces; the trading data lives in the polybot database
+# and is untouched. ClickHouse recreates each table on its next flush.
+prod-purge-ch-logs: ## Reclaim disk from ClickHouse's own log tables (run on the server)
+	@for t in text_log processors_profile_log trace_log query_log \
+	          query_views_log part_log metric_log asynchronous_metric_log \
+	          error_log; do \
+		for tbl in $$t $${t}_0 $${t}_1; do \
+			docker exec aware-clickhouse clickhouse-client \
+				-q "DROP TABLE IF EXISTS system.$$tbl SYNC" 2>/dev/null; \
+		done; \
+	done
+	@echo "purged; disk now:"
+	@df -h / | tail -1
 
 # ── Run on the server itself ──────────────────────────────────────────────────
 # --build because this project builds its images rather than pulling them.
