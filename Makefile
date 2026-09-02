@@ -257,6 +257,17 @@ prod-up: ## Build and start the production stack (run on the server)
 	@docker compose $(PROD_COMPOSE) exec -T caddy caddy reload \
 		--config /etc/caddy/Caddyfile 2>/dev/null \
 		&& echo "caddy config reloaded" || echo "caddy not running; skipped reload"
+	@# Redpanda persists cluster properties at first bootstrap, so retention
+	@# cannot be set from compose: it has to go through rpk once the cluster
+	@# answers. Idempotent, so it costs nothing to reapply every deploy.
+	@# Without it Redpanda keeps a week of already-consumed events — 16 GB
+	@# when the disk filled.
+	@docker compose $(PROD_COMPOSE) exec -T redpanda \
+		rpk cluster config set log_retention_ms 86400000 >/dev/null 2>&1 \
+		&& docker compose $(PROD_COMPOSE) exec -T redpanda \
+			rpk cluster config set retention_bytes 2147483648 >/dev/null 2>&1 \
+		&& echo "redpanda retention applied" \
+		|| echo "redpanda not running; skipped retention"
 	docker image prune -f
 	@# Every --build leaves layers behind and nothing evicts them: 16.5 GB had
 	@# piled up by the time the disk filled. A week keeps rebuilds fast while

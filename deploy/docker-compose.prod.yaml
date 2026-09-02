@@ -36,16 +36,11 @@ services:
       - "0M"
       - --node-id
       - "0"
-      # Kafka here is a transport to ClickHouse, not an archive: ClickHouse
-      # consumes within seconds and owns the durable copy. The default was
-      # seven days with no byte ceiling, which parked 16 GB of already-
-      # consumed polybot.events on a 79 GB disk. A day of replay room is
-      # more than enough to recover from a consumer outage, and the byte
-      # cap is the one that actually bounds the disk if throughput spikes.
-      - --set
-      - redpanda.log_retention_ms=86400000
-      - --set
-      - redpanda.retention_bytes=2147483648
+      # Retention is NOT set here. log_retention_ms and retention_bytes are
+      # cluster properties: Redpanda persists them at first bootstrap and
+      # ignores --set on every later start, so a value here would look
+      # applied and silently do nothing. `make prod-up` sets them through
+      # rpk after the cluster is up. See the retention step there.
       - --check=false
       - --kafka-addr
       - INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
@@ -80,6 +75,9 @@ services:
       # container after editing this file — a file mount pins the container to
       # an inode that git replaces.
       - ../analytics-service/clickhouse/users.d/network-access.xml:/etc/clickhouse-server/users.d/network-access.xml:ro
+      # Same single-file rule. Turns off processors_profile_log, which the
+      # config.d section alone could not stop: the setting recreates it.
+      - ../analytics-service/clickhouse/users.d/query-logging.xml:/etc/clickhouse-server/users.d/query-logging.xml:ro
       # Also a single file, and for a sharper reason: the image ships its own
       # config.d/docker_related_config.xml, which is what sets listen_host so
       # ClickHouse accepts connections from outside the container. Mounting the
@@ -390,6 +388,9 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
+      # A time limit alone is not a disk limit: if scrape volume grows, so
+      # does 30 days of it. Whichever cap is reached first wins.
+      - '--storage.tsdb.retention.size=1GB'
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     restart: unless-stopped

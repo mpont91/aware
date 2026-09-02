@@ -60,3 +60,14 @@ ALTER TABLE polybot.executor_order_cancel
 
 ALTER TABLE polybot.executor_order_market
     MODIFY TTL toDateTime(ts) + INTERVAL 7 DAY;
+
+-- Per-position P&L snapshots. The job rewrites every open position on every
+-- run, so this grows by 129,000 rows a day — 10.7 MB/day, 3.9 GB/year — and
+-- every one of its five readers asks only for the newest snapshot:
+--
+--   WHERE calculated_at = (SELECT max(calculated_at) FROM ...)
+--
+-- Nothing reads a snapshot older than the last one. A week is kept so a
+-- surprising P&L figure can still be traced back a few runs.
+ALTER TABLE polybot.aware_strategy_pnl_positions
+    MODIFY TTL toDateTime(calculated_at) + INTERVAL 7 DAY;

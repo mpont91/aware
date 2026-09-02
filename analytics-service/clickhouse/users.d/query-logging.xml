@@ -1,0 +1,23 @@
+<clickhouse>
+  <!--
+    Turn off per-processor profiling.
+
+    config.d/logging.xml removes the <processors_profile_log> section, which
+    is enough for text_log but not for this one: the setting below is what
+    makes the server write the rows, and while it is on ClickHouse recreates
+    the table regardless of the config section. Five minutes after the config
+    was deployed the table was back with 409,000 rows — about five million an
+    hour, which is what made it the second largest thing on the disk at
+    6.9 GiB.
+
+    It records one row per query processor per query. That is a tool for
+    hand-tuning a specific slow query, not something anything here reads.
+    query_log stays on: it is how you find a slow or failing query after the
+    fact, and it is capped at three days.
+  -->
+  <profiles>
+    <default>
+      <log_processors_profiles>0</log_processors_profiles>
+    </default>
+  </profiles>
+</clickhouse>
