@@ -270,9 +270,11 @@ prod-up: ## Build and start the production stack (run on the server)
 		|| echo "redpanda not running; skipped retention"
 	docker image prune -f
 	@# Every --build leaves layers behind and nothing evicts them: 16.5 GB had
-	@# piled up by the time the disk filled. A week keeps rebuilds fast while
-	@# bounding the cache.
-	docker builder prune -f --filter until=168h
+	@# piled up by the time the disk filled. Bounded by size, not age: two
+	@# deploys in one afternoon rebuilt it to 18.7 GB, and an age filter will
+	@# not touch cache that is hours old. 5 GB still covers a full rebuild of
+	@# the Java and Next.js layers.
+	docker builder prune -f --max-used-space=5GB
 
 prod-down: ## Stop the production stack (run on the server)
 	docker compose $(PROD_COMPOSE) down
