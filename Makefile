@@ -7,7 +7,7 @@
 # Run 'make help' to see all available targets
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.PHONY: help local up down build logs status clean ssh deploy prod-up prod-down prod-logs prod-purge-ch-logs test
+.PHONY: help local up down build logs status clean ssh deploy prod-up prod-down prod-logs prod-purge-ch-logs purge-ch-logs test
 
 # Read configuration from .env in the repo root. Optional, so targets that
 # don't need it still work on a fresh clone.
@@ -243,6 +243,9 @@ prod-purge-ch-logs: ## Reclaim disk from ClickHouse's own log tables (run on the
 	done
 	@echo "purged; disk now:"
 	@df -h / | tail -1
+
+purge-ch-logs: require-server ## Reclaim ClickHouse log-table disk on the server
+	ssh $(SERVER_USER)@$(SERVER_IP) "cd $(PROJECT_PATH) && make prod-purge-ch-logs"
 
 # ── Run on the server itself ──────────────────────────────────────────────────
 # --build because this project builds its images rather than pulling them.
