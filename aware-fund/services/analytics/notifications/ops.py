@@ -35,6 +35,13 @@ REPEAT_AFTER = timedelta(hours=int(os.getenv('OPS_ALERT_REPEAT_HOURS', '6')))
 # continuously on 5- and 15-minute markets.
 STALL_MINUTES = int(os.getenv('OPS_ALERT_STALL_MINUTES', '60'))
 
+# The disk filled to 100% once and took the stack down with it: ClickHouse
+# could not write a temp file, Redpanda could not write a segment and restarted
+# 238 times, and the ingestor went unhealthy behind it. The alerts that fired
+# reported the failing job, never the reason, so the cause had to be found by
+# hand. 85% leaves roughly a day of headroom at the rate this host writes.
+DISK_WARN_PCT = int(os.getenv('OPS_ALERT_DISK_PCT', '85'))
+
 # Jobs whose failure is known, understood and not actionable, so alerting on
 # them is noise rather than news. Both of these fail on "No module named
 # 'ml.models'": the package is simply not in the repository, so nothing can be
@@ -160,6 +167,34 @@ def _collect_engine_stalls(ch_client) -> list[tuple[str, str]]:
     return problems
 
 
+def _collect_disk_pressure(ch_client) -> list[tuple[str, str]]:
+    """
+    Whether the host is running out of disk.
+
+    ClickHouse's data directory sits on the same filesystem as everything
+    else here, so system.disks reports the host's own free space and no
+    extra plumbing is needed to see it.
+    """
+    try:
+        rows = ch_client.query(
+            "SELECT total_space, free_space FROM system.disks "
+            "WHERE name = 'default'").result_rows
+    except Exception as e:
+        logger.error(f"Disk check failed: {e}")
+        return []
+    if not rows or not rows[0][0]:
+        return []
+
+    total, free = int(rows[0][0]), int(rows[0][1])
+    used_pct = 100 * (1 - free / total)
+    if used_pct < DISK_WARN_PCT:
+        return []
+
+    free_gb = free / 1024 ** 3
+    return [('host:disk',
+             f'Disk {used_pct:.0f}% full, {free_gb:.1f} GB left')]
+
+
 async def _send(text: str) -> None:
     """
     Push one message to Telegram.
@@ -185,7 +220,9 @@ def check_and_notify(results: dict, ch_client) -> dict:
 
     Returns a summary so the caller can log what was found.
     """
-    problems = _collect_failed_jobs(results) + _collect_engine_stalls(ch_client)
+    problems = (_collect_failed_jobs(results)
+                + _collect_engine_stalls(ch_client)
+                + _collect_disk_pressure(ch_client))
     current = {key: message for key, message in problems}
     now = datetime.now(timezone.utc)
 

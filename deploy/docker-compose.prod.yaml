@@ -1,5 +1,14 @@
 name: aware-production
 
+# Docker never rotates json-file logs on its own, so a chatty container grows
+# until the disk is gone — one had reached 473 MB when the host filled up.
+# 50 MB across three files caps the whole stack at well under a gigabyte.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   # ═══════════════════════════════════════════════════════════════════════════
   # INFRASTRUCTURE
@@ -8,6 +17,7 @@ services:
   redpanda:
     image: redpandadata/redpanda:v24.2.11
     container_name: aware-redpanda
+    logging: *default-logging
     # Above --memory below: seastar reserves that, and the process needs
     # headroom on top of it.
     mem_limit: 1300m
@@ -26,6 +36,16 @@ services:
       - "0M"
       - --node-id
       - "0"
+      # Kafka here is a transport to ClickHouse, not an archive: ClickHouse
+      # consumes within seconds and owns the durable copy. The default was
+      # seven days with no byte ceiling, which parked 16 GB of already-
+      # consumed polybot.events on a 79 GB disk. A day of replay room is
+      # more than enough to recover from a consumer outage, and the byte
+      # cap is the one that actually bounds the disk if throughput spikes.
+      - --set
+      - redpanda.log_retention_ms=86400000
+      - --set
+      - redpanda.retention_bytes=2147483648
       - --check=false
       - --kafka-addr
       - INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
@@ -43,6 +63,7 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
     container_name: aware-clickhouse
+    logging: *default-logging
     mem_limit: 2560m   # baseline is ~1.2G with 299 tables, MVs and Kafka
     # consumers; ClickHouse takes 90% of this as its own ceiling, so 1500m
     # left barely 100M for query working memory and the P&L job hit the
@@ -65,6 +86,9 @@ services:
       # directory hides it — the server then listens on localhost only, its own
       # client still works, and every other container gets connection refused.
       - ../analytics-service/clickhouse/config.d/keep-alive.xml:/etc/clickhouse-server/config.d/keep-alive.xml:ro
+      # Caps ClickHouse's own telemetry tables, which had no TTL and grew to
+      # 22.8 GiB against 3.3 GiB of real data — that is what filled the disk.
+      - ../analytics-service/clickhouse/config.d/logging.xml:/etc/clickhouse-server/config.d/logging.xml:ro
       - clickhouse_data:/var/lib/clickhouse
     environment:
       CLICKHOUSE_DB: polybot
@@ -88,6 +112,7 @@ services:
       args:
         SERVICE: executor-service
     container_name: aware-executor
+    logging: *default-logging
     mem_limit: 640m
     depends_on:
       clickhouse:
@@ -130,6 +155,7 @@ services:
       args:
         SERVICE: strategy-service
     container_name: aware-strategy
+    logging: *default-logging
     mem_limit: 1g   # busiest of the three: six mirror funds plus GABAGOOL
     depends_on:
       executor:
@@ -169,6 +195,7 @@ services:
       args:
         SERVICE: ingestor-service
     container_name: aware-ingestor
+    logging: *default-logging
     mem_limit: 640m
     depends_on:
       clickhouse:
@@ -208,6 +235,7 @@ services:
       context: ../aware-fund/services/analytics
       dockerfile: Dockerfile
     container_name: aware-analytics
+    logging: *default-logging
     mem_limit: 1g
     depends_on:
       clickhouse:
@@ -251,6 +279,7 @@ services:
       context: ../aware-fund/services/api
       dockerfile: Dockerfile
     container_name: aware-api
+    logging: *default-logging
     mem_limit: 384m
     depends_on:
       clickhouse:
@@ -295,6 +324,7 @@ services:
         # target has to be known here rather than at runtime.
         API_INTERNAL_URL: http://api:8000
     container_name: aware-web
+    logging: *default-logging
     mem_limit: 384m
     depends_on:
       - api
@@ -322,6 +352,7 @@ services:
       context: .
       dockerfile: Dockerfile.caddy
     container_name: aware-caddy
+    logging: *default-logging
     mem_limit: 128m
     depends_on:
       - web
@@ -350,6 +381,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.48.0
     container_name: aware-prometheus
+    logging: *default-logging
     mem_limit: 256m
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -365,6 +397,7 @@ services:
   grafana:
     image: grafana/grafana:10.2.2
     container_name: aware-grafana
+    logging: *default-logging
     mem_limit: 256m
     depends_on:
       - prometheus

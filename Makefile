@@ -237,6 +237,10 @@ prod-up: ## Build and start the production stack (run on the server)
 		--config /etc/caddy/Caddyfile 2>/dev/null \
 		&& echo "caddy config reloaded" || echo "caddy not running; skipped reload"
 	docker image prune -f
+	@# Every --build leaves layers behind and nothing evicts them: 16.5 GB had
+	@# piled up by the time the disk filled. A week keeps rebuilds fast while
+	@# bounding the cache.
+	docker builder prune -f --filter until=168h
 
 prod-down: ## Stop the production stack (run on the server)
 	docker compose $(PROD_COMPOSE) down

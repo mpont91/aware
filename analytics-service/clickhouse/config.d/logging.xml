@@ -1,0 +1,55 @@
+<clickhouse>
+    <!--
+      ClickHouse logs its own telemetry into system tables, and the image
+      ships those tables with no TTL. On this host they reached 22.8 GiB
+      against 3.3 GiB of actual trading data, filled a 79 GB disk, and took
+      the stack down: the P&L job could not write a temp file (errno 28),
+      Redpanda could not write a segment and restarted 238 times, and the
+      ingestor went unhealthy behind it.
+
+      Two of those tables earn nothing here and are removed outright:
+
+      text_log            9.3 GiB — ClickHouse's own log lines, duplicated
+                          into a table. The same lines are already in
+                          `docker logs aware-clickhouse`. It arrives at
+                          ~300k rows an hour, which is where most of the
+                          disk went.
+      processors_profile_log
+                          6.9 GiB — per-processor query profiling. Useful
+                          when tuning a slow query by hand, dead weight the
+                          rest of the time.
+
+      The rest are worth keeping — query_log is how you find a slow or
+      failing query after the fact — but with a horizon. Three days covers
+      any incident you would actually investigate.
+
+      Changing a log table's TTL makes ClickHouse rename the existing one
+      aside (query_log_0) rather than alter it, so the old data keeps its
+      space until dropped. Drop the old tables once after deploying this;
+      ClickHouse recreates them on the next flush.
+    -->
+    <text_log remove="1"/>
+    <processors_profile_log remove="1"/>
+
+    <query_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_log>
+    <query_views_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </query_views_log>
+    <trace_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </trace_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </part_log>
+    <metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </metric_log>
+    <asynchronous_metric_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+    <error_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </error_log>
+</clickhouse>
