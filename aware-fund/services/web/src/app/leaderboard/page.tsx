@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { SkeletonRows } from '@/components/ui/Loading'
+import { Skeleton } from '@/components/ui/Loading'
 import Link from 'next/link'
 import {
   Trophy,
@@ -33,6 +33,86 @@ const tierStyles: Record<string, { bg: string; text: string; glow: string }> = {
 // Helper to capitalize tier
 const formatTier = (tier: string) => tier.charAt(0).toUpperCase() + tier.slice(1).toLowerCase()
 
+// Placeholder rows on the table's own 12-column grid, so nothing shifts
+// sideways when the real rows arrive. Twenty of them: six left most of the
+// viewport empty, and the page jumped as it filled to a hundred.
+function LeaderboardSkeleton({ rows = 20 }: { rows?: number }) {
+  return (
+    <div className="divide-y divide-slate-800" aria-hidden="true">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="grid grid-cols-12 gap-4 p-4 items-center">
+          <div className="col-span-1 flex justify-center">
+            <Skeleton className="h-4 w-5" />
+          </div>
+          <div className="col-span-3 flex items-center gap-2">
+            <Skeleton className="w-9 h-9 rounded-full shrink-0" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-32" />
+              <Skeleton className="h-3 w-14 rounded-full" />
+            </div>
+          </div>
+          <div className="col-span-1 flex justify-end">
+            <Skeleton className="h-4 w-7" />
+          </div>
+          <div className="col-span-2 flex justify-end">
+            <Skeleton className="h-4 w-20" />
+          </div>
+          <div className="col-span-2 flex justify-end">
+            <Skeleton className="h-4 w-12" />
+          </div>
+          <div className="col-span-1 flex justify-end">
+            <Skeleton className="h-4 w-8" />
+          </div>
+          <div className="col-span-2 flex justify-end">
+            <Skeleton className="h-4 w-14" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Defined at module scope on purpose. As a function inside the page component
+// its identity changed on every render, so React unmounted and remounted all
+// five headers each time — the visible flicker this was meant to avoid.
+function SortHeader({
+  label,
+  col,
+  span,
+  sortBy,
+  sortDir,
+  onSort,
+}: {
+  label: string
+  col: SortKey
+  span: number
+  sortBy: SortKey
+  sortDir: 'asc' | 'desc'
+  onSort: (key: SortKey) => void
+}) {
+  const active = sortBy === col
+  return (
+    <div
+      className={cn(
+        'text-right cursor-pointer hover:text-white flex items-center justify-end gap-1 select-none',
+        span === 1 ? 'col-span-1' : span === 2 ? 'col-span-2' : 'col-span-3',
+        active && 'text-white',
+      )}
+      onClick={() => onSort(col)}
+      role="button"
+      aria-sort={active ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'none'}
+    >
+      {label}
+      {active &&
+        (sortDir === 'desc' ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronUp className="h-4 w-4" />
+        ))}
+    </div>
+  )
+}
+
 type SortKey =
   | 'smart_money_score'
   | 'total_pnl'
@@ -48,6 +128,7 @@ export default function LeaderboardPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('smart_money_score')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [summary, setSummary] = useState<LeaderboardSummary | null>(null)
 
   // Clicking the active column flips direction; clicking a new one starts
   // descending, which is what "top traders" means for every column here.
@@ -59,7 +140,6 @@ export default function LeaderboardPage() {
       setSortDir('desc')
     }
   }
-  const [summary, setSummary] = useState<LeaderboardSummary | null>(null)
 
   // Counts and totals over every scored trader. Kept apart from the row fetch
   // on purpose: the rows are a filtered page of at most a hundred, and deriving
@@ -128,30 +208,6 @@ export default function LeaderboardPage() {
     totalTrades: summary?.total_trades ?? 0,
   }
 
-  // Every column header sorts, and shows which way. Previously only four were
-  // wired, the arrow was decorative, and clicking the active column did
-  // nothing at all — so Score, already the default, looked broken on click.
-  const SortHeader = ({ label, col, span }: { label: string; col: SortKey; span: number }) => (
-    <div
-      className={cn(
-        'text-right cursor-pointer hover:text-white flex items-center justify-end gap-1 select-none',
-        span === 1 ? 'col-span-1' : span === 2 ? 'col-span-2' : 'col-span-3',
-        sortBy === col && 'text-white'
-      )}
-      onClick={() => toggleSort(col)}
-      role="button"
-      aria-sort={sortBy === col ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'none'}
-    >
-      {label}
-      {sortBy === col &&
-        (sortDir === 'desc' ? (
-          <ChevronDown className="h-4 w-4" />
-        ) : (
-          <ChevronUp className="h-4 w-4" />
-        ))}
-    </div>
-  )
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -217,29 +273,39 @@ export default function LeaderboardPage() {
         </div>
       )}
 
-      {/* Loading State */}
-      {isLoading && (
-        <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
-          <SkeletonRows rows={6} />
-        </div>
-      )}
-
-      {/* Table */}
-      {!isLoading && !error && (
+      {/* Table. The header renders in both states: it used to live inside a
+          block gated on !isLoading, next to a separate skeleton block, so
+          every sort tore the whole table down and rebuilt it — the columns
+          you had just clicked vanished under the cursor. */}
+      {!error && (
         <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
           {/* Table Header */}
           <div className="grid grid-cols-12 gap-4 p-4 bg-slate-800/50 text-sm font-medium text-slate-400 border-b border-slate-800">
-            <div className="col-span-1 text-center">#</div>
+            {/* Not sortable: it *is* the score ranking, so sorting by it
+                would duplicate the Score header. */}
+            <div
+              className="col-span-1 text-center cursor-help"
+              title="Rank by Smart Money Score across all scored traders"
+            >
+              #
+            </div>
             <div className="col-span-3">Trader</div>
-            <SortHeader label="Score" col="smart_money_score" span={1} />
-            <SortHeader label="Total P&L" col="total_pnl" span={2} />
-            <SortHeader label="Win %" col="win_rate" span={2} />
-            <SortHeader label="Sharpe" col="sharpe_ratio" span={1} />
-            <SortHeader label="Trades" col="total_trades" span={2} />
+            <SortHeader label="Score" col="smart_money_score" span={1}
+                        sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+            <SortHeader label="Total P&L" col="total_pnl" span={2}
+                        sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+            <SortHeader label="Win %" col="win_rate" span={2}
+                        sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+            <SortHeader label="Sharpe" col="sharpe_ratio" span={1}
+                        sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+            <SortHeader label="Trades" col="total_trades" span={2}
+                        sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
           </div>
 
+          {isLoading && <LeaderboardSkeleton rows={20} />}
+
           {/* Empty State */}
-          {filteredTraders.length === 0 && (
+          {!isLoading && filteredTraders.length === 0 && (
             <div className="p-12 text-center">
               <Trophy className="h-12 w-12 text-slate-600 mx-auto mb-4" />
               <p className="text-slate-400">No traders found</p>
@@ -256,7 +322,7 @@ export default function LeaderboardPage() {
 
           {/* Table Body */}
           <div className="divide-y divide-slate-800">
-            {filteredTraders.map((trader, i) => {
+            {!isLoading && filteredTraders.map((trader) => {
               const tierStyle = tierStyles[trader.tier] || tierStyles['BRONZE']
               return (
                 <Link
@@ -264,25 +330,26 @@ export default function LeaderboardPage() {
                   href={`/traders/${trader.username || trader.proxy_address}`}
                   className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-slate-800/30 transition-colors"
                 >
-                  {/* Position in the current sort, not a stored rank. The
-                      stored one is a global rank over every scored trader, so
-                      it survived filtering and sorting unchanged: picking a
-                      tier or sorting by P&L left the column reading 3, 4, 14,
-                      19 with a crown on nobody. */}
+                  {/* Standing in the Smart Money ranking, which is what the
+                      crown and medals mean. Briefly this was the row's
+                      position instead, and reversing the sort then crowned
+                      the worst trader on the board. Keeping the real rank
+                      also says something useful under other sorts: the top
+                      trader by P&L sitting at #1304 is the point. */}
                   <div className="col-span-1 text-center">
-                    {i === 0 && <Crown className="w-6 h-6 text-yellow-400 mx-auto" />}
-                    {i === 1 && (
+                    {trader.rank === 1 && <Crown className="w-6 h-6 text-yellow-400 mx-auto" />}
+                    {trader.rank === 2 && (
                       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-300/20 text-slate-300 font-bold">
                         2
                       </span>
                     )}
-                    {i === 2 && (
+                    {trader.rank === 3 && (
                       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-orange-500/20 text-orange-400 font-bold">
                         3
                       </span>
                     )}
-                    {i > 2 && (
-                      <span className="text-slate-500 font-medium">{i + 1}</span>
+                    {trader.rank > 3 && (
+                      <span className="text-slate-500 font-medium">{trader.rank}</span>
                     )}
                   </div>
 
