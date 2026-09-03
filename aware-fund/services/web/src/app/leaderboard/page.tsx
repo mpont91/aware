@@ -74,38 +74,49 @@ export default function LeaderboardPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Fetch data from API
+  // Typing must not fire a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300)
+    return () => clearTimeout(t)
+  }, [searchQuery])
+
+  // Tier, sort and search all go to the server, so this refetches when any of
+  // them changes. Sorting and filtering used to happen here over the hundred
+  // rows already loaded, which answered a different question than the one the
+  // header asked: "top by P&L" returned the best of the top hundred by score,
+  // not the best of 14,923.
+  useEffect(() => {
+    let cancelled = false
     async function fetchLeaderboard() {
       try {
         setIsLoading(true)
         setError(null)
-        const data = await api.getLeaderboard(100, selectedTier === 'All' ? undefined : selectedTier)
-        setTraders(data)
+        const data = await api.getLeaderboard(
+          100,
+          selectedTier === 'All' ? undefined : selectedTier,
+          sortBy,
+          sortDir,
+          debouncedSearch || undefined,
+        )
+        // A slow earlier request must not overwrite a newer one; with search
+        // firing on a timer these do overlap.
+        if (!cancelled) setTraders(data)
       } catch (err) {
-        setError('Failed to load leaderboard. Make sure the API server is running.')
-        console.error('Leaderboard fetch error:', err)
+        if (!cancelled) {
+          setError('Failed to load leaderboard. Make sure the API server is running.')
+          console.error('Leaderboard fetch error:', err)
+        }
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
     fetchLeaderboard()
-  }, [selectedTier])
+    return () => { cancelled = true }
+  }, [selectedTier, sortBy, sortDir, debouncedSearch])
 
-  // Filter and sort locally
+  // Already sorted and filtered by the server.
   const filteredTraders = traders
-    .filter((t) => {
-      // Matched against the name actually shown and the wallet: almost no
-      // account sets a username, so searching that alone matched nothing.
-      const q = searchQuery.trim().toLowerCase()
-      if (!q) return true
-      return [t.username, t.pseudonym, t.proxy_address]
-        .some((v) => (v || '').toLowerCase().includes(q))
-    })
-    .sort((a, b) => {
-      const diff = (a[sortBy] || 0) - (b[sortBy] || 0)
-      return sortDir === 'desc' ? -diff : diff
-    })
 
   // Calculate stats
   // Over every scored trader, not the page on screen — otherwise the headline
@@ -233,9 +244,12 @@ export default function LeaderboardPage() {
               <Trophy className="h-12 w-12 text-slate-600 mx-auto mb-4" />
               <p className="text-slate-400">No traders found</p>
               <p className="text-sm text-slate-500 mt-1">
-                {traders.length === 0
-                  ? 'Run the scoring job to populate the leaderboard'
-                  : 'Try adjusting your filters'}
+                {/* The server does the filtering now, so an empty result no
+                    longer means an empty table — it usually means the search
+                    or tier matched nothing. */}
+                {debouncedSearch || selectedTier !== 'All'
+                  ? 'Try adjusting your search or tier filter'
+                  : 'Run the scoring job to populate the leaderboard'}
               </p>
             </div>
           )}

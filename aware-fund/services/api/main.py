@@ -720,6 +720,19 @@ VALID_TIERS = {'BRONZE', 'SILVER', 'GOLD', 'DIAMOND'}
 VALID_STRATEGIES = {'UNKNOWN', 'ARBITRAGEUR', 'MARKET_MAKER', 'DIRECTIONAL_FUNDAMENTAL',
                     'DIRECTIONAL_MOMENTUM', 'EVENT_DRIVEN', 'SCALPER', 'HYBRID'}
 
+# Sortable leaderboard columns, mapped to SQL so the client never supplies an
+# identifier. The page used to sort whatever hundred rows it happened to hold,
+# so "top by P&L" meant the best of the top hundred by score, not the best of
+# 14,923.
+LEADERBOARD_SORTS = {
+    'smart_money_score': 'smart_money_score',
+    'total_pnl': 'total_pnl',
+    'win_rate': 'win_rate',
+    'sharpe_ratio': 'sharpe_ratio',
+    'total_trades': 'total_trades',
+    'rank': 'rank',
+}
+
 
 @app.get("/api/leaderboard/summary")
 @limiter.limit("100/minute")
@@ -788,12 +801,15 @@ async def get_leaderboard(
     offset: int = Query(default=0, ge=0),
     tier: Optional[str] = Query(default=None),
     strategy: Optional[str] = Query(default=None),
+    sort_by: str = Query(default='rank'),
+    sort_dir: str = Query(default='asc'),
+    search: Optional[str] = Query(default=None, max_length=100),
     api_key: Optional[str] = Depends(optional_api_key)
 ):
     """
     Get the AWARE leaderboard.
 
-    Traders ranked by Smart Money Score.
+    Sorted and searched across every scored trader, not within a page.
     """
     try:
         client = get_clickhouse_client()
@@ -804,16 +820,43 @@ async def get_leaderboard(
             tier_upper = tier.upper()
             if tier_upper not in VALID_TIERS:
                 raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {', '.join(VALID_TIERS)}")
-            where_clauses.append(f"tier = '{tier_upper}'")
+            where_clauses.append(f"lb.tier = '{tier_upper}'")
         if strategy:
             strategy_upper = strategy.upper()
             if strategy_upper not in VALID_STRATEGIES:
                 raise HTTPException(status_code=400, detail=f"Invalid strategy. Must be one of: {', '.join(VALID_STRATEGIES)}")
-            where_clauses.append(f"strategy_type = '{strategy_upper}'")
+            where_clauses.append(f"lb.strategy_type = '{strategy_upper}'")
+
+        query_params: dict = {}
+        if search:
+            # Matched against the name actually shown and the wallet, because
+            # almost no account sets a username. Parameterised — this is the
+            # only free text on the endpoint.
+            where_clauses.append(
+                "(positionCaseInsensitive(lb.username, %(q)s) > 0"
+                " OR positionCaseInsensitive(lb.pseudonym, %(q)s) > 0"
+                " OR positionCaseInsensitive(lb.proxy_address, %(q)s) > 0)")
+            query_params['q'] = search.strip()
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-        # Use the ML-enhanced leaderboard view which includes sharpe_ratio and win_rate
+        if sort_by not in LEADERBOARD_SORTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid sort_by. Must be one of: "
+                       f"{', '.join(sorted(LEADERBOARD_SORTS))}")
+        if sort_dir.lower() not in ('asc', 'desc'):
+            raise HTTPException(status_code=400,
+                                detail="Invalid sort_dir. Must be asc or desc")
+        # Never interpolated from the request: both sides come from the
+        # whitelist above. `rank` breaks ties so paging is stable — without it
+        # ClickHouse is free to return a different row order for equal scores
+        # on each call, and thousands of traders share a score.
+        order_col = LEADERBOARD_SORTS[sort_by]
+        order_sql = f"{order_col} {sort_dir.upper()}"
+        if order_col != 'rank':
+            order_sql += ", rank ASC"
+
         query = f"""
             SELECT
                 rank,
@@ -836,11 +879,11 @@ async def get_leaderboard(
             LEFT JOIN (SELECT proxy_address, total_trades FROM aware_trader_profiles FINAL) AS p
                 ON lb.proxy_address = p.proxy_address
             WHERE {where_sql}
-            ORDER BY rank ASC
+            ORDER BY {order_sql}
             LIMIT {limit} OFFSET {offset}
         """
 
-        result = client.query(query)
+        result = client.query(query, parameters=query_params)
 
         entries = []
         for row in result.result_rows:

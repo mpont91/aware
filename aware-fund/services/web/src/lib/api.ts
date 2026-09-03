@@ -579,8 +579,19 @@ export const api = {
     return fetchJson<LeaderboardSummary>('/api/leaderboard/summary')
   },
 
-  async getLeaderboard(limit = 100, tier?: string): Promise<Trader[]> {
-    const data = await fetchJson<Array<Record<string, unknown>>>(`/api/leaderboard${qp({ limit, tier })}`)
+  // Sorting and searching happen server-side, over every scored trader.
+  // Doing either in the browser only ever reordered the page already held,
+  // so "top by P&L" meant the best of the top hundred by score.
+  async getLeaderboard(
+    limit = 100,
+    tier?: string,
+    sortBy?: string,
+    sortDir?: 'asc' | 'desc',
+    search?: string,
+  ): Promise<Trader[]> {
+    const data = await fetchJson<Array<Record<string, unknown>>>(
+      `/api/leaderboard${qp({ limit, tier, sort_by: sortBy, sort_dir: sortDir, search })}`,
+    )
     return data.map((raw) => {
       const winRateRaw = toNumber(raw.win_rate, 0)
       return {
