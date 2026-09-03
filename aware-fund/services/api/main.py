@@ -771,6 +771,15 @@ async def get_leaderboard_summary(request: Request):
                 ON s.proxy_address = w.proxy_address
         """).result_rows
 
+        # Whether the Sharpe column has anything to show. It needs 20 days of
+        # resolved P&L per trader and the resolution history starts 2026-08-26,
+        # so for now this is zero and the column hides itself rather than
+        # printing a dash on every row.
+        sharpe_rows = client.query(
+            "SELECT count() FROM polybot.aware_ml_scores FINAL "
+            "WHERE sharpe_ratio != 0").result_rows
+        traders_with_sharpe = int(sharpe_rows[0][0]) if sharpe_rows else 0
+
         by_tier = {t: int(n) for t, n in tiers}
         row = totals[0] if totals else (0, 0, 0, 0)
         return {
@@ -784,6 +793,7 @@ async def get_leaderboard_summary(request: Request):
             'total_pnl': round(float(row[1] or 0), 2),
             'avg_win_rate': round(float(row[2] or 0), 4),
             'total_trades': int(row[3] or 0),
+            'traders_with_sharpe': traders_with_sharpe,
         }
 
     except HTTPException:

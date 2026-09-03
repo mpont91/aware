@@ -12,6 +12,8 @@ export interface LeaderboardSummary {
   total_pnl: number
   avg_win_rate: number
   total_trades: number
+  /** Zero until traders accumulate enough resolved P&L for a Sharpe. */
+  traders_with_sharpe?: number
 }
 
 export interface Trader {

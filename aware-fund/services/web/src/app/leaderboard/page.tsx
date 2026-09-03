@@ -36,7 +36,7 @@ const formatTier = (tier: string) => tier.charAt(0).toUpperCase() + tier.slice(1
 // Placeholder rows on the table's own 12-column grid, so nothing shifts
 // sideways when the real rows arrive. Twenty of them: six left most of the
 // viewport empty, and the page jumped as it filled to a hundred.
-function LeaderboardSkeleton({ rows = 20 }: { rows?: number }) {
+function LeaderboardSkeleton({ rows = 20, showSharpe }: { rows?: number; showSharpe: boolean }) {
   return (
     <div className="divide-y divide-slate-800" aria-hidden="true">
       {Array.from({ length: rows }).map((_, i) => (
@@ -44,7 +44,10 @@ function LeaderboardSkeleton({ rows = 20 }: { rows?: number }) {
           <div className="col-span-1 flex justify-center">
             <Skeleton className="h-4 w-5" />
           </div>
-          <div className="col-span-3 flex items-center gap-2">
+          <div className={cn(
+            'flex items-center gap-2',
+            showSharpe ? 'col-span-3' : 'col-span-4',
+          )}>
             <Skeleton className="w-9 h-9 rounded-full shrink-0" />
             <div className="min-w-0 flex-1 space-y-1.5">
               <Skeleton className="h-3.5 w-32" />
@@ -60,9 +63,11 @@ function LeaderboardSkeleton({ rows = 20 }: { rows?: number }) {
           <div className="col-span-2 flex justify-end">
             <Skeleton className="h-4 w-12" />
           </div>
-          <div className="col-span-1 flex justify-end">
-            <Skeleton className="h-4 w-8" />
-          </div>
+          {showSharpe && (
+            <div className="col-span-1 flex justify-end">
+              <Skeleton className="h-4 w-8" />
+            </div>
+          )}
           <div className="col-span-2 flex justify-end">
             <Skeleton className="h-4 w-14" />
           </div>
@@ -129,6 +134,13 @@ export default function LeaderboardPage() {
   const [sortBy, setSortBy] = useState<SortKey>('smart_money_score')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [summary, setSummary] = useState<LeaderboardSummary | null>(null)
+
+  // The Sharpe column hides itself until at least one trader has enough
+  // resolved P&L for the figure to mean anything. Annualising from a handful
+  // of days is what produced 10.00 on every row; a column of dashes is
+  // honest but takes space and reads like a bug. Asked of the summary, not
+  // of the loaded page, so sorting cannot make the column appear and vanish.
+  const showSharpe = (summary?.traders_with_sharpe ?? 0) > 0
 
   // Clicking the active column flips direction; clicking a new one starts
   // descending, which is what "top traders" means for every column here.
@@ -289,20 +301,22 @@ export default function LeaderboardPage() {
             >
               #
             </div>
-            <div className="col-span-3">Trader</div>
+            <div className={showSharpe ? 'col-span-3' : 'col-span-4'}>Trader</div>
             <SortHeader label="Score" col="smart_money_score" span={1}
                         sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
             <SortHeader label="Total P&L" col="total_pnl" span={2}
                         sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
             <SortHeader label="Win %" col="win_rate" span={2}
                         sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
-            <SortHeader label="Sharpe" col="sharpe_ratio" span={1}
-                        sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+            {showSharpe && (
+              <SortHeader label="Sharpe" col="sharpe_ratio" span={1}
+                          sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
+            )}
             <SortHeader label="Trades" col="total_trades" span={2}
                         sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />
           </div>
 
-          {isLoading && <LeaderboardSkeleton rows={20} />}
+          {isLoading && <LeaderboardSkeleton rows={20} showSharpe={showSharpe} />}
 
           {/* Empty State */}
           {!isLoading && filteredTraders.length === 0 && (
@@ -354,7 +368,10 @@ export default function LeaderboardPage() {
                   </div>
 
                   {/* Trader */}
-                  <div className="col-span-3 flex items-center gap-2">
+                  <div className={cn(
+                    'flex items-center gap-2',
+                    showSharpe ? 'col-span-3' : 'col-span-4',
+                  )}>
                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white font-bold text-sm">
                       {traderInitial(trader)}
                     </div>
@@ -397,20 +414,21 @@ export default function LeaderboardPage() {
                     </span>
                   </div>
 
-                  {/* Sharpe. Zero means not computed: it needs 20 days of
-                      resolved P&L and no trader has that yet. Showing "0.00"
-                      would read as a measured result. */}
-                  <div className="col-span-1 text-right">
-                    {trader.sharpe_ratio ? (
-                      <span className="text-slate-300">
-                        {trader.sharpe_ratio.toFixed(2)}
-                      </span>
-                    ) : (
-                      <span className="text-slate-600" title="Needs 20 days of resolved P&L">
-                        —
-                      </span>
-                    )}
-                  </div>
+                  {/* Sharpe, only while the column is shown. A zero here is
+                      "not enough history", not a measured zero. */}
+                  {showSharpe && (
+                    <div className="col-span-1 text-right">
+                      {trader.sharpe_ratio ? (
+                        <span className="text-slate-300">
+                          {trader.sharpe_ratio.toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className="text-slate-600" title="Needs 20 days of resolved P&L">
+                          —
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Trades */}
                   <div className="col-span-2 text-right">
