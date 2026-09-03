@@ -85,8 +85,22 @@ class SharpeCalculator:
         sharpe_data = self._calculate_sharpe_ratios(min_days)
         logger.info(f"Calculated Sharpe for {len(sharpe_data)} traders")
 
+        # This table is a full recomputation of every eligible trader, not an
+        # append: a trader who no longer qualifies must disappear, and every
+        # surviving row is about to be rewritten anyway. It only ever
+        # inserted, so raising the minimum sample size left 14,678 rows of
+        # three-day Sharpes in place with nothing to replace them -- the
+        # leaderboard would have kept showing them indefinitely.
+        try:
+            self.ch.command('TRUNCATE TABLE polybot.aware_ml_scores')
+        except Exception as e:
+            logger.error(f"Could not clear aware_ml_scores: {e}")
+            return 0
+
         if not sharpe_data:
-            logger.info("No traders with sufficient P&L history for Sharpe")
+            logger.info(
+                "No trader has %d days of resolved P&L yet; Sharpe left empty",
+                min_days)
             return 0
 
         # Store in aware_ml_scores

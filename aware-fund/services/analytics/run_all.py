@@ -515,7 +515,9 @@ def run_sharpe_calculation(ch_client) -> dict:
         from sharpe_calculator import SharpeCalculator
 
         calculator = SharpeCalculator(ch_client)
-        traders_with_sharpe = calculator.run(min_days=3)
+        # Uses MIN_DAYS_FOR_SHARPE. This passed min_days=3 explicitly, which
+        # silently overrode the module's own threshold.
+        traders_with_sharpe = calculator.run()
         summary = calculator.get_sharpe_summary()
 
         elapsed = time.time() - start
