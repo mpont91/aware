@@ -68,28 +68,48 @@ LEFT JOIN (SELECT * FROM polybot.aware_ml_scores FINAL) AS ml
     ON s.proxy_address = ml.proxy_address;
 
 -- ----------------------------------------------------------------------------
--- AWARE LEADERBOARD VIEW (with ML scores)
+-- AWARE LEADERBOARD VIEW
 -- ----------------------------------------------------------------------------
--- Combined leaderboard view with both rule-based and ML scores.
--- Note: ClickHouse LEFT JOIN returns 0/empty string for non-matches, not NULL
--- So we use if(ml.proxy_address = '', ...) instead of coalesce()
--- Joins aware_trader_pnl to get actual win_rate from P&L calculations.
+-- The rule-based scorer decides rank, score and tier. It used to be the other
+-- way round -- ML preferred, rules as fallback -- and that is what broke the
+-- leaderboard:
+--
+--                        rank 1    rank 2    rank 3    tiers
+--   rule-based scorer    88 DIA    87 DIA    87 DIA    155 Diamond, 3545 Gold
+--   aware_ml_scores      33 SIL    33 SIL    33 SIL    0 Diamond, 120 Gold
+--
+-- aware_ml_scores is not a model. sharpe_calculator.py fills it by bucketing
+-- an annualised Sharpe into 30/45/60/75/90 and discounting by confidence, so
+-- 60 * (0.5 + 0.5*0.1) = 33 -- which is why almost every trader scored 33 and
+-- the page looked randomly ordered. It also renumbers rank by Sharpe, so the
+-- two numbering schemes were interleaved and the visible ranks had holes in
+-- them (3, 4, 14, 19...). The Sharpe underneath is itself noise: it is
+-- annualised from as few as three daily observations.
+--
+-- win_rate comes from the P&L, which actually has it: 32,089 traders with a
+-- real figure averaging 49%. The ML table hardcodes the column to 0.0 with a
+-- "calculated elsewhere" comment, and preferring it is what made every row
+-- show 0%.
+--
+-- The ML columns are still selected so the shape of the view does not change,
+-- and so the day a real model lands there is somewhere to put it.
 -- ----------------------------------------------------------------------------
 
 CREATE OR REPLACE VIEW polybot.aware_leaderboard_ml AS
 SELECT
-  if(ml.proxy_address = '', s.rank, ml.rank) AS rank,
+  s.rank AS rank,
   s.username AS username,
   p.pseudonym AS pseudonym,
   s.proxy_address AS proxy_address,
-  -- Use ML score if available, fallback to rule-based
-  if(ml.proxy_address = '', toFloat32(s.total_score), ml.ml_score) AS smart_money_score,
-  if(ml.proxy_address = '', s.tier, ml.ml_tier) AS tier,
+  toFloat32(s.total_score) AS smart_money_score,
+  s.tier AS tier,
+  -- Kept for the ML column in the UI; not what ranks anyone.
+  if(ml.proxy_address = '', 0.0, ml.ml_score) AS ml_score,
   if(ml.proxy_address = '', 0.0, ml.tier_confidence) AS tier_confidence,
   if(ml.proxy_address = '', 0.0, ml.predicted_sharpe_30d) AS predicted_sharpe_30d,
-  -- Features: prefer ML, fallback to P&L-calculated metrics
   if(ml.proxy_address = '', 0.0, ml.sharpe_ratio) AS sharpe_ratio,
-  if(ml.proxy_address != '', ml.win_rate, if(pnl.proxy_address != '', pnl.win_rate, 0.0)) AS win_rate,
+  -- Measured, not predicted.
+  if(pnl.proxy_address = '', 0.0, pnl.win_rate) AS win_rate,
   if(ml.proxy_address = '', 0.0, ml.max_drawdown) AS max_drawdown,
   if(ml.proxy_address = '', 0.0, ml.maker_ratio) AS maker_ratio,
   -- Profile data

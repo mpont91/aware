@@ -9,11 +9,9 @@ Formula:
 
 Note: We use 365 days (prediction markets trade daily) not 252 (stock trading days).
 
-Accuracy Improvements:
-- Minimum 7 days of data required (was 3)
-- Sharpe capped at 10.0 to filter noise (anything above is statistically unlikely)
-- Confidence-weighted scoring based on sample size
-- Proper confidence intervals calculated
+A Sharpe is only as good as the sample behind it. Annualising by sqrt(365)
+multiplies whatever noise is in the daily figures by 19, so a short history
+does not produce an approximate Sharpe -- it produces a meaningless one.
 """
 
 import logging
@@ -24,10 +22,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Minimum days of P&L data required for reliable Sharpe calculation
-# Ideally 14+ for statistical significance, but we start with 3 to have data
-# As more data accumulates, increase this threshold
-MIN_DAYS_FOR_SHARPE = 3
+# Minimum days of P&L data required before a Sharpe means anything.
+#
+# This was 3 -- the docstring above claimed 7 -- and three daily observations
+# annualised by sqrt(365) is noise, not a ratio. It showed: the median stored
+# Sharpe was -4.45, one trader in six sat pinned at the +10 cap, and 92 were
+# below -100 (the worst, -1.8 billion, from a near-zero standard deviation).
+# The leaderboard duly showed 10.00 for every visible trader.
+#
+# Nothing is lost by waiting. Every trader currently has between 3 and 9 days
+# of resolved P&L, so this yields no rows until the history is there, and an
+# empty Sharpe column is the honest answer to "how consistent is this trader"
+# after one week of observation.
+MIN_DAYS_FOR_SHARPE = 20
 
 # Maximum realistic Sharpe ratio (best hedge funds rarely exceed 3-4)
 # Anything above 10 is almost certainly noise from small sample size
@@ -160,9 +167,11 @@ class SharpeCalculator:
                 else:
                     sharpe_raw = 0.0
 
-                # Cap Sharpe at realistic maximum
-                # Sharpe > 10 is almost always noise from small samples
-                sharpe_capped = min(sharpe_raw, MAX_SHARPE_RATIO)
+                # Clamp both ways. This capped only the top, so a trader
+                # with a near-zero standard deviation stored -1,813,179,900
+                # verbatim while the same magnitude upward became a tidy 10.
+                sharpe_capped = max(-MAX_SHARPE_RATIO,
+                                    min(sharpe_raw, MAX_SHARPE_RATIO))
 
                 # Calculate confidence based on sample size
                 # Uses sigmoid-like curve: 7 days = 0.23, 14 days = 0.47, 30 days = 1.0

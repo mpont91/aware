@@ -9,15 +9,13 @@ import {
   TrendingUp,
   TrendingDown,
   ChevronDown,
+  ChevronUp,
   Crown,
   Loader2,
   AlertCircle,
-  Brain,
-  Calculator,
 } from 'lucide-react'
 import { cn, formatCurrency, formatNumber } from '@/lib/utils'
 import { api, LeaderboardSummary, Trader, traderName, traderInitial } from '@/lib/api'
-import { MLScoreInline } from '@/components/traders/MLScoreBadge'
 
 const tiers = ['All', 'Diamond', 'Gold', 'Silver', 'Bronze']
 
@@ -35,13 +33,32 @@ const tierStyles: Record<string, { bg: string; text: string; glow: string }> = {
 // Helper to capitalize tier
 const formatTier = (tier: string) => tier.charAt(0).toUpperCase() + tier.slice(1).toLowerCase()
 
+type SortKey =
+  | 'smart_money_score'
+  | 'total_pnl'
+  | 'win_rate'
+  | 'sharpe_ratio'
+  | 'total_trades'
+
 export default function LeaderboardPage() {
   const [traders, setTraders] = useState<Trader[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedTier, setSelectedTier] = useState('All')
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortBy, setSortBy] = useState<'smart_money_score' | 'total_pnl' | 'win_rate' | 'sharpe_ratio'>('smart_money_score')
+  const [sortBy, setSortBy] = useState<SortKey>('smart_money_score')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  // Clicking the active column flips direction; clicking a new one starts
+  // descending, which is what "top traders" means for every column here.
+  const toggleSort = (key: SortKey) => {
+    if (key === sortBy) {
+      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))
+    } else {
+      setSortBy(key)
+      setSortDir('desc')
+    }
+  }
   const [summary, setSummary] = useState<LeaderboardSummary | null>(null)
 
   // Counts and totals over every scored trader. Kept apart from the row fetch
@@ -85,7 +102,10 @@ export default function LeaderboardPage() {
       return [t.username, t.pseudonym, t.proxy_address]
         .some((v) => (v || '').toLowerCase().includes(q))
     })
-    .sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0))
+    .sort((a, b) => {
+      const diff = (a[sortBy] || 0) - (b[sortBy] || 0)
+      return sortDir === 'desc' ? -diff : diff
+    })
 
   // Calculate stats
   // Over every scored trader, not the page on screen — otherwise the headline
@@ -96,6 +116,30 @@ export default function LeaderboardPage() {
     avgWinRate: summary?.avg_win_rate ?? 0,
     totalTrades: summary?.total_trades ?? 0,
   }
+
+  // Every column header sorts, and shows which way. Previously only four were
+  // wired, the arrow was decorative, and clicking the active column did
+  // nothing at all — so Score, already the default, looked broken on click.
+  const SortHeader = ({ label, col, span }: { label: string; col: SortKey; span: number }) => (
+    <div
+      className={cn(
+        'text-right cursor-pointer hover:text-white flex items-center justify-end gap-1 select-none',
+        span === 1 ? 'col-span-1' : span === 2 ? 'col-span-2' : 'col-span-3',
+        sortBy === col && 'text-white'
+      )}
+      onClick={() => toggleSort(col)}
+      role="button"
+      aria-sort={sortBy === col ? (sortDir === 'desc' ? 'descending' : 'ascending') : 'none'}
+    >
+      {label}
+      {sortBy === col &&
+        (sortDir === 'desc' ? (
+          <ChevronDown className="h-4 w-4" />
+        ) : (
+          <ChevronUp className="h-4 w-4" />
+        ))}
+    </div>
+  )
 
   return (
     <div className="space-y-6">
@@ -175,42 +219,12 @@ export default function LeaderboardPage() {
           {/* Table Header */}
           <div className="grid grid-cols-12 gap-4 p-4 bg-slate-800/50 text-sm font-medium text-slate-400 border-b border-slate-800">
             <div className="col-span-1 text-center">#</div>
-            <div className="col-span-2">Trader</div>
-            <div
-              className="col-span-1 text-right cursor-pointer hover:text-white flex items-center justify-end gap-1"
-              onClick={() => setSortBy('smart_money_score')}
-            >
-              Score
-              {sortBy === 'smart_money_score' && <ChevronDown className="h-4 w-4" />}
-            </div>
-            <div className="col-span-2 text-center">
-              <div className="flex items-center justify-center gap-1">
-                <Brain className="h-3.5 w-3.5 text-aware-400" />
-                <span>ML Score</span>
-              </div>
-            </div>
-            <div
-              className="col-span-2 text-right cursor-pointer hover:text-white flex items-center justify-end gap-1"
-              onClick={() => setSortBy('total_pnl')}
-            >
-              Total P&L
-              {sortBy === 'total_pnl' && <ChevronDown className="h-4 w-4" />}
-            </div>
-            <div
-              className="col-span-1 text-right cursor-pointer hover:text-white flex items-center justify-end gap-1"
-              onClick={() => setSortBy('win_rate')}
-            >
-              Win %
-              {sortBy === 'win_rate' && <ChevronDown className="h-4 w-4" />}
-            </div>
-            <div
-              className="col-span-1 text-right cursor-pointer hover:text-white flex items-center justify-end gap-1"
-              onClick={() => setSortBy('sharpe_ratio')}
-            >
-              Sharpe
-              {sortBy === 'sharpe_ratio' && <ChevronDown className="h-4 w-4" />}
-            </div>
-            <div className="col-span-2 text-right">Trades</div>
+            <div className="col-span-3">Trader</div>
+            <SortHeader label="Score" col="smart_money_score" span={1} />
+            <SortHeader label="Total P&L" col="total_pnl" span={2} />
+            <SortHeader label="Win %" col="win_rate" span={2} />
+            <SortHeader label="Sharpe" col="sharpe_ratio" span={1} />
+            <SortHeader label="Trades" col="total_trades" span={2} />
           </div>
 
           {/* Empty State */}
@@ -228,37 +242,38 @@ export default function LeaderboardPage() {
 
           {/* Table Body */}
           <div className="divide-y divide-slate-800">
-            {filteredTraders.map((trader) => {
+            {filteredTraders.map((trader, i) => {
               const tierStyle = tierStyles[trader.tier] || tierStyles['BRONZE']
-              const hasMLScore = trader.ml_score !== undefined || trader.tier_confidence !== undefined
               return (
                 <Link
                   key={trader.proxy_address || trader.username}
                   href={`/traders/${trader.username || trader.proxy_address}`}
                   className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-slate-800/30 transition-colors"
                 >
-                  {/* Rank */}
+                  {/* Position in the current sort, not a stored rank. The
+                      stored one is a global rank over every scored trader, so
+                      it survived filtering and sorting unchanged: picking a
+                      tier or sorting by P&L left the column reading 3, 4, 14,
+                      19 with a crown on nobody. */}
                   <div className="col-span-1 text-center">
-                    {trader.rank === 1 && (
-                      <Crown className="w-6 h-6 text-yellow-400 mx-auto" />
-                    )}
-                    {trader.rank === 2 && (
+                    {i === 0 && <Crown className="w-6 h-6 text-yellow-400 mx-auto" />}
+                    {i === 1 && (
                       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-300/20 text-slate-300 font-bold">
                         2
                       </span>
                     )}
-                    {trader.rank === 3 && (
+                    {i === 2 && (
                       <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-orange-500/20 text-orange-400 font-bold">
                         3
                       </span>
                     )}
-                    {trader.rank > 3 && (
-                      <span className="text-slate-500 font-medium">{trader.rank}</span>
+                    {i > 2 && (
+                      <span className="text-slate-500 font-medium">{i + 1}</span>
                     )}
                   </div>
 
-                  {/* Trader - reduced from col-span-3 to col-span-2 */}
-                  <div className="col-span-2 flex items-center gap-2">
+                  {/* Trader */}
+                  <div className="col-span-3 flex items-center gap-2">
                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-aware-400 to-aware-600 flex items-center justify-center text-white font-bold text-sm">
                       {traderInitial(trader)}
                     </div>
@@ -277,28 +292,11 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
 
-                  {/* Score - reduced from col-span-2 to col-span-1 */}
+                  {/* Score */}
                   <div className="col-span-1 text-right">
                     <span className="text-base font-bold text-white">
                       {(trader.smart_money_score || 0).toFixed(0)}
                     </span>
-                  </div>
-
-                  {/* ML Score - NEW col-span-2 */}
-                  <div className="col-span-2 flex justify-center">
-                    {hasMLScore ? (
-                      <MLScoreInline
-                        score={trader.ml_score ?? trader.smart_money_score}
-                        tier={trader.tier}
-                        tierConfidence={trader.tier_confidence}
-                        modelVersion={trader.model_version}
-                      />
-                    ) : (
-                      <div className="flex items-center gap-1 text-slate-500">
-                        <Calculator className="w-3 h-3" />
-                        <span className="text-xs">Rule-based</span>
-                      </div>
-                    )}
                   </div>
 
                   {/* Total P&L */}
@@ -312,17 +310,25 @@ export default function LeaderboardPage() {
                   </div>
 
                   {/* Win Rate */}
-                  <div className="col-span-1 text-right">
+                  <div className="col-span-2 text-right">
                     <span className="text-white">
                       {((trader.win_rate || 0) * 100).toFixed(1)}%
                     </span>
                   </div>
 
-                  {/* Sharpe */}
+                  {/* Sharpe. Zero means not computed: it needs 20 days of
+                      resolved P&L and no trader has that yet. Showing "0.00"
+                      would read as a measured result. */}
                   <div className="col-span-1 text-right">
-                    <span className="text-slate-300">
-                      {(trader.sharpe_ratio || 0).toFixed(2)}
-                    </span>
+                    {trader.sharpe_ratio ? (
+                      <span className="text-slate-300">
+                        {trader.sharpe_ratio.toFixed(2)}
+                      </span>
+                    ) : (
+                      <span className="text-slate-600" title="Needs 20 days of resolved P&L">
+                        —
+                      </span>
+                    )}
                   </div>
 
                   {/* Trades */}
