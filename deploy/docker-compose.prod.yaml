@@ -59,10 +59,15 @@ services:
     image: clickhouse/clickhouse-server:24.8
     container_name: aware-clickhouse
     logging: *default-logging
-    mem_limit: 2560m   # baseline is ~1.2G with 299 tables, MVs and Kafka
-    # consumers; ClickHouse takes 90% of this as its own ceiling, so 1500m
-    # left barely 100M for query working memory and the P&L job hit the
-    # wall on a normal run. 2560m leaves about a gigabyte to work in.
+    # 2560m stopped being enough: baseline usage crept up with the table/MV
+    # count and was sitting at ~2.1-2.5G, so ClickHouse's own 90%-of-limit
+    # ceiling left it almost no working memory and the OvercommitTracker
+    # started killing ordinary queries (Code 241, MEMORY_LIMIT_EXCEEDED) —
+    # including the fund's trade-polling query, which is how it silently
+    # stopped picking up copyable trades for hours at a time. Bumped by 576m,
+    # reclaimed from caddy/web/api/grafana below, which were sized generously
+    # above their actual usage.
+    mem_limit: 3136m
     depends_on:
       redpanda:
         condition: service_healthy
@@ -278,7 +283,9 @@ services:
       dockerfile: Dockerfile
     container_name: aware-api
     logging: *default-logging
-    mem_limit: 384m
+    # Running at ~54M steady state; 160m keeps ~3x headroom while freeing 224m
+    # for clickhouse (see its mem_limit comment).
+    mem_limit: 160m
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -323,7 +330,9 @@ services:
         API_INTERNAL_URL: http://api:8000
     container_name: aware-web
     logging: *default-logging
-    mem_limit: 384m
+    # Running at ~48M steady state; 192m keeps ~4x headroom while freeing
+    # 192m for clickhouse (see its mem_limit comment).
+    mem_limit: 192m
     depends_on:
       - api
     environment:
@@ -351,7 +360,9 @@ services:
       dockerfile: Dockerfile.caddy
     container_name: aware-caddy
     logging: *default-logging
-    mem_limit: 128m
+    # Running at ~23M steady state; 64m keeps ~2.8x headroom while freeing
+    # 64m for clickhouse (see its mem_limit comment).
+    mem_limit: 64m
     depends_on:
       - web
     ports:
@@ -399,7 +410,9 @@ services:
     image: grafana/grafana:10.2.2
     container_name: aware-grafana
     logging: *default-logging
-    mem_limit: 256m
+    # Running at ~88M steady state; 160m keeps ~1.8x headroom while freeing
+    # 96m for clickhouse (see its mem_limit comment).
+    mem_limit: 160m
     depends_on:
       - prometheus
     environment:

@@ -155,8 +155,21 @@ public class FundTradeListener {
             log.info("Initializing poll window: looking back 1 hour to {}", lastPollTime);
         }
 
-        // Query for new trades
-        List<RawTrade> trades = queryTrades(addresses, lastPollTime, now);
+        // Query for new trades. On failure, leave lastPollTime where it was so
+        // this window is retried on the next poll instead of being silently
+        // dropped — advancing it unconditionally here was the bug: a query
+        // killed by a ClickHouse memory-limit error (misreported by Spring as
+        // BadSqlGrammarException) used to mark that window "done" and its
+        // trades were never seen again.
+        List<RawTrade> trades;
+        try {
+            trades = queryTrades(addresses, lastPollTime, now);
+        } catch (Exception e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            log.warn("Trade query error, will retry window [{} to {}] on next poll: {}: {}",
+                    lastPollTime, now, cause.getClass().getSimpleName(), cause.getMessage());
+            return List.of();
+        }
         tradesProcessed += trades.size();
         tradesPolledCounter.increment(trades.size());
 
@@ -165,7 +178,7 @@ public class FundTradeListener {
                     trades.size(), config.indexType(), lastPollTime, now);
         }
 
-        // Update highwater mark
+        // Update highwater mark only after a successful query
         lastPollTime = now;
 
         // Convert to signals, filtering duplicates
@@ -245,28 +258,28 @@ public class FundTradeListener {
             log.info("Query: {} addresses, window=[{} to {}], first addr={}",
                 addresses.size(), fromStr, toStr, addresses.isEmpty() ? "none" : addresses.get(0));
         }
-        try {
-            List<RawTrade> result = jdbcTemplate.query(sql, (rs, rowNum) -> new RawTrade(
-                    rs.getTimestamp("ts").toInstant(),
-                    rs.getString("trade_id"),
-                    rs.getString("username"),
-                    rs.getString("proxy_address"),
-                    rs.getString("market_slug"),
-                    rs.getString("token_id"),
-                    rs.getString("side"),
-                    rs.getString("outcome"),
-                    rs.getDouble("price"),
-                    rs.getDouble("size"),
-                    rs.getDouble("notional")
-            ));
-            if (!result.isEmpty()) {
-                log.info("Found {} trades from PSI traders", result.size());
-            }
-            return result;
-        } catch (Exception e) {
-            log.warn("Trade query error: {}", e.getMessage());
-            return List.of();
+        // Let failures propagate to the caller instead of swallowing them here:
+        // the caller decides whether it's safe to advance the poll window, and
+        // Spring wraps the underlying driver exception (e.g. ClickHouse's real
+        // error, such as a memory-limit kill) as the cause, which is lost if
+        // we only log e.getMessage() here.
+        List<RawTrade> result = jdbcTemplate.query(sql, (rs, rowNum) -> new RawTrade(
+                rs.getTimestamp("ts").toInstant(),
+                rs.getString("trade_id"),
+                rs.getString("username"),
+                rs.getString("proxy_address"),
+                rs.getString("market_slug"),
+                rs.getString("token_id"),
+                rs.getString("side"),
+                rs.getString("outcome"),
+                rs.getDouble("price"),
+                rs.getDouble("size"),
+                rs.getDouble("notional")
+        ));
+        if (!result.isEmpty()) {
+            log.info("Found {} trades from PSI traders", result.size());
         }
+        return result;
     }
 
     private TraderSignal convertToSignal(RawTrade trade, IndexConstituent constituent) {
