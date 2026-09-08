@@ -2120,6 +2120,114 @@ async def get_fund_positions(fund_id: str = Query(default="PSI-10")):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class OpenPosition(BaseModel):
+    """One open position, attributed to whichever fund/strategy holds it."""
+    fund_id: str
+    category: str  # 'MIRROR' or 'ACTIVE'
+    token_id: str
+    market_slug: str
+    title: str = ''
+    outcome: str
+    shares: float
+    cost_usd: float
+    avg_entry_price: float
+    current_price: Optional[float] = None
+    current_value: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    unrealized_pnl_pct: Optional[float] = None
+
+
+@app.get("/api/positions", response_model=list[OpenPosition])
+async def get_all_open_positions():
+    """
+    Every open position, across every fund, in one flat list.
+
+    Same source and same apportionment as /api/fund/positions (one call per
+    fund), just not filtered down to a single fund_id — for a detail view
+    that doesn't require switching funds to see what's actually held.
+    """
+    try:
+        client = get_clickhouse_client()
+
+        rows = client.query("""
+            SELECT strategy, token_id, market_slug, title, outcome, net_shares,
+                   cost_usd, avg_price, mark_status, mark_price, value_usd, pnl_usd
+            FROM polybot.aware_strategy_pnl_positions
+            WHERE strategy IN ('GABAGOOL', 'MIRROR')
+              AND is_resolved = 0
+              AND calculated_at = (
+                  SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
+                  WHERE strategy IN ('GABAGOOL', 'MIRROR')
+              )
+        """).result_rows
+
+        # Mirror funds copy overlapping tokens, so a token's fill cannot be
+        # attributed to one fund exactly — apportioned by requested shares,
+        # same as /api/fund/positions.
+        mirror_tokens = {r[1] for r in rows if r[0] == 'MIRROR'}
+        weights: dict[str, dict[str, float]] = {}
+        if mirror_tokens:
+            weight_rows = client.query("""
+                SELECT token_id, fund_id, sum(toFloat64(fund_shares)) AS requested
+                FROM polybot.aware_fund_executions
+                WHERE token_id IN %(tokens)s
+                GROUP BY token_id, fund_id
+            """, parameters={'tokens': tuple(mirror_tokens)}).result_rows
+            for token_id, fid, requested in weight_rows:
+                weights.setdefault(token_id, {})[fid.upper()] = float(requested)
+
+        out: list[OpenPosition] = []
+        for (strategy, token_id, market_slug, title, outcome, net_shares,
+             cost_usd, avg_price, mark_status, mark_price, value_usd, pnl_usd) in rows:
+            priced = mark_status != 'STALE'
+            cost_usd = float(cost_usd)
+
+            if strategy == 'GABAGOOL':
+                out.append(OpenPosition(
+                    fund_id='ALPHA-ARB', category='ACTIVE',
+                    token_id=token_id, market_slug=market_slug, title=title or market_slug,
+                    outcome=outcome, shares=round(float(net_shares), 2),
+                    cost_usd=round(cost_usd, 2), avg_entry_price=round(float(avg_price), 4),
+                    current_price=round(float(mark_price), 4) if priced else None,
+                    current_value=round(float(value_usd), 2) if priced else None,
+                    unrealized_pnl=round(float(pnl_usd), 2) if priced else None,
+                    unrealized_pnl_pct=(
+                        round(100 * float(pnl_usd) / cost_usd, 2) if priced and cost_usd else None
+                    ),
+                ))
+                continue
+
+            token_weights = weights.get(token_id, {})
+            total = sum(token_weights.values())
+            if not total:
+                continue
+            for fund_id, requested in token_weights.items():
+                share = requested / total
+                shares = float(net_shares) * share
+                cost = cost_usd * share
+                out.append(OpenPosition(
+                    fund_id=fund_id, category='MIRROR',
+                    token_id=token_id, market_slug=market_slug, title=title or market_slug,
+                    outcome=outcome, shares=round(shares, 2),
+                    cost_usd=round(cost, 2), avg_entry_price=round(float(avg_price), 4),
+                    current_price=round(float(mark_price), 4) if priced else None,
+                    current_value=round(float(value_usd) * share, 2) if priced else None,
+                    unrealized_pnl=round(float(pnl_usd) * share, 2) if priced else None,
+                    unrealized_pnl_pct=(
+                        round(100 * float(pnl_usd) / cost_usd, 2) if priced and cost_usd else None
+                    ),
+                ))
+
+        out.sort(key=lambda p: -p.cost_usd)
+        return out
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get all open positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/fund/trades", response_model=list[FundTrade])
 async def get_fund_trades(
     fund_id: str = Query(default="psi-10-main"),

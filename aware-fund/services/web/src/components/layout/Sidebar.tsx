@@ -17,12 +17,14 @@ import {
   Layers,
   Wallet,
   Brain,
+  ListOrdered,
 } from 'lucide-react'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Fund', href: '/fund', icon: PieChart },
   { name: 'All Funds', href: '/funds', icon: Layers },
+  { name: 'Positions', href: '/positions', icon: ListOrdered },
   { name: 'Leaderboard', href: '/leaderboard', icon: Trophy },
   { name: 'Consensus', href: '/consensus', icon: Users },
   { name: 'Discovery', href: '/discovery', icon: Sparkles },

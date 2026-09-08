@@ -1,0 +1,220 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import {
+  Activity,
+  AlertCircle,
+  Layers,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react'
+import { Skeleton } from '@/components/ui/Loading'
+import { cn, formatCurrency, formatPercent } from '@/lib/utils'
+import { api, OpenPosition } from '@/lib/api'
+
+const categories = ['All', 'MIRROR', 'ACTIVE'] as const
+type CategoryFilter = (typeof categories)[number]
+
+const categoryLabel: Record<string, string> = {
+  MIRROR: 'Copy',
+  ACTIVE: 'Active',
+}
+
+function PositionsSkeleton() {
+  return (
+    <div className="divide-y divide-slate-800" aria-hidden="true">
+      {Array.from({ length: 10 }).map((_, i) => (
+        <div key={i} className="grid grid-cols-12 gap-4 p-4 items-center">
+          <div className="col-span-2"><Skeleton className="h-4 w-16" /></div>
+          <div className="col-span-4"><Skeleton className="h-4 w-full" /></div>
+          <div className="col-span-2"><Skeleton className="h-4 w-16" /></div>
+          <div className="col-span-2"><Skeleton className="h-4 w-16" /></div>
+          <div className="col-span-2"><Skeleton className="h-4 w-20" /></div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export default function PositionsPage() {
+  const [positions, setPositions] = useState<OpenPosition[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [filter, setFilter] = useState<CategoryFilter>('All')
+
+  useEffect(() => {
+    let cancelled = false
+
+    function load() {
+      api
+        .getAllPositions()
+        .then((data) => { if (!cancelled) { setPositions(data); setError(null) } })
+        .catch(() => { if (!cancelled) setError('Failed to load positions') })
+    }
+
+    load()
+    const interval = setInterval(load, 30000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
+  const rows = (positions ?? []).filter((p) => filter === 'All' || p.category === filter)
+
+  // Only priced positions count toward the totals — an unpriced one has no
+  // value or P&L to add, and treating its missing mark as zero would silently
+  // understate the cost still sitting in it.
+  const priced = rows.filter((p) => p.unrealized_pnl !== null && p.current_value !== null)
+  const totalCost = rows.reduce((sum, p) => sum + p.cost_usd, 0)
+  const totalValue = priced.reduce((sum, p) => sum + (p.current_value ?? 0), 0)
+  const totalPnl = priced.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0)
+  const pricedCost = priced.reduce((sum, p) => sum + p.cost_usd, 0)
+  const totalPnlPct = pricedCost ? (totalPnl / pricedCost) * 100 : 0
+  const unpricedCount = rows.length - priced.length
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+          <Layers className="h-7 w-7 text-aware-400" />
+          Open Positions
+        </h1>
+        <p className="text-slate-400 mt-1">
+          Every position every fund holds right now, copy and active strategies together.
+        </p>
+      </div>
+
+      {error && (
+        <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4 flex items-center gap-3">
+          <AlertCircle className="h-5 w-5 text-red-400" />
+          <p className="text-red-400">{error}</p>
+        </div>
+      )}
+
+      <div className="flex gap-1 p-1 bg-slate-800/50 rounded-lg w-fit">
+        {categories.map((c) => (
+          <button
+            key={c}
+            onClick={() => setFilter(c)}
+            className={cn(
+              'px-3 py-1.5 text-xs font-medium rounded-md transition-all',
+              filter === c ? 'bg-aware-500 text-white' : 'text-slate-400 hover:text-white'
+            )}
+          >
+            {c === 'All' ? 'All' : categoryLabel[c]}
+          </button>
+        ))}
+      </div>
+
+      <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
+        <div className="overflow-x-auto">
+          <div className="min-w-[720px]">
+            <div className="grid grid-cols-12 gap-4 p-4 bg-slate-800/50 text-xs font-medium text-slate-400 uppercase tracking-wider border-b border-slate-800">
+              <div className="col-span-2">Fund</div>
+              <div className="col-span-4">Market</div>
+              <div className="col-span-2 text-right">Entry price</div>
+              <div className="col-span-2 text-right">Current price</div>
+              <div className="col-span-2 text-right">P&amp;L</div>
+            </div>
+
+            {positions === null ? (
+              <PositionsSkeleton />
+            ) : rows.length === 0 ? (
+              <div className="p-10 text-center">
+                <Activity className="h-10 w-10 text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400">No open positions</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-800">
+                {rows.map((p) => {
+                  const winning = p.unrealized_pnl !== null && p.unrealized_pnl >= 0
+                  return (
+                    <div
+                      key={`${p.fund_id}-${p.token_id}`}
+                      className="grid grid-cols-12 gap-4 p-4 items-center hover:bg-slate-800/30 transition-colors"
+                    >
+                      <div className="col-span-2">
+                        <Link
+                          href={`/fund?type=${p.fund_id}`}
+                          className="text-sm font-medium text-aware-400 hover:text-aware-300"
+                        >
+                          {p.fund_id}
+                        </Link>
+                        <p className="text-xs text-slate-500">{categoryLabel[p.category]}</p>
+                      </div>
+
+                      <div className="col-span-4 min-w-0">
+                        <p className="text-white font-medium truncate" title={p.title}>
+                          {p.title || p.market_slug}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {p.outcome} &middot; {formatCurrency(p.cost_usd)} cost
+                        </p>
+                      </div>
+
+                      <div className="col-span-2 text-right text-slate-300 font-mono text-sm">
+                        {(p.avg_entry_price * 100).toFixed(1)}&cent;
+                      </div>
+
+                      <div className="col-span-2 text-right font-mono text-sm">
+                        {p.current_price === null ? (
+                          <span className="text-slate-500" title="No recent print for this token">&mdash;</span>
+                        ) : (
+                          <span className="text-slate-300">{(p.current_price * 100).toFixed(1)}&cent;</span>
+                        )}
+                      </div>
+
+                      <div className="col-span-2 text-right">
+                        {p.unrealized_pnl === null ? (
+                          <span className="text-slate-500 text-sm">unpriced</span>
+                        ) : (
+                          <div className={cn(
+                            'flex items-center justify-end gap-1 font-semibold',
+                            winning ? 'text-green-400' : 'text-red-400'
+                          )}>
+                            {winning ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                            <span>
+                              {winning ? '+' : '−'}{formatCurrency(Math.abs(p.unrealized_pnl))}
+                            </span>
+                            {p.unrealized_pnl_pct !== null && (
+                              <span className="text-xs text-slate-500 ml-1">
+                                ({formatPercent(p.unrealized_pnl_pct)})
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {rows.length > 0 && (
+              <div className="grid grid-cols-12 gap-4 p-4 bg-slate-800/50 border-t border-slate-700 font-semibold">
+                <div className="col-span-2 text-slate-300">Totals</div>
+                <div className="col-span-4 text-slate-500 text-xs self-center">
+                  {rows.length} position{rows.length === 1 ? '' : 's'}
+                  {unpricedCount > 0 && ` · ${unpricedCount} unpriced (excluded below)`}
+                </div>
+                <div className="col-span-2 text-right text-slate-300 font-mono text-sm">
+                  {formatCurrency(totalCost)}
+                </div>
+                <div className="col-span-2 text-right text-slate-400 font-mono text-sm">
+                  {formatCurrency(totalValue)}
+                </div>
+                <div className={cn(
+                  'col-span-2 text-right',
+                  totalPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                )}>
+                  {totalPnl >= 0 ? '+' : '−'}{formatCurrency(Math.abs(totalPnl))}
+                  <span className="text-xs text-slate-500 ml-1">
+                    ({formatPercent(totalPnlPct)})
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -377,6 +377,23 @@ export interface FundsSummary {
   funds: FundSummaryEntry[]
 }
 
+export interface OpenPosition {
+  fund_id: string
+  category: 'MIRROR' | 'ACTIVE'
+  token_id: string
+  market_slug: string
+  title: string
+  outcome: string
+  shares: number
+  cost_usd: number
+  avg_entry_price: number
+  /** null when the token has no recent print, so the mark would be a guess. */
+  current_price: number | null
+  current_value: number | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
+}
+
 export interface FundPnlHistory {
   fund_id: string
   days: number
@@ -563,6 +580,10 @@ export const api = {
 
   async getFundsSummary(): Promise<FundsSummary> {
     return fetchJson<FundsSummary>('/api/fund/summary')
+  },
+
+  async getAllPositions(): Promise<OpenPosition[]> {
+    return fetchJson<OpenPosition[]>('/api/positions')
   },
 
   async getPnlHistory(days = 7): Promise<PnlHistory> {

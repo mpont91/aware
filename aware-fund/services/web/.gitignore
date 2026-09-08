@@ -10,6 +10,7 @@ out/
 # Build
 build/
 dist/
+*.tsbuildinfo
 
 # Testing
 coverage/
