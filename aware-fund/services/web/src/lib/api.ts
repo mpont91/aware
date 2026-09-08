@@ -392,6 +392,12 @@ export interface OpenPosition {
   current_value: number | null
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
+  /** 'STALE' means no print in the last ~15min — almost always because the
+   *  market itself stopped trading and is waiting on resolution, not a bug. */
+  mark_status: 'OPEN' | 'STALE'
+  mark_age_min: number
+  opened_at: string | null
+  last_trade_at: string | null
 }
 
 export interface FundPnlHistory {

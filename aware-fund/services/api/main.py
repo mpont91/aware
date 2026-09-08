@@ -2135,6 +2135,14 @@ class OpenPosition(BaseModel):
     current_value: Optional[float] = None
     unrealized_pnl: Optional[float] = None
     unrealized_pnl_pct: Optional[float] = None
+    # 'OPEN' has a quote fresh enough to trust; 'STALE' means no print in
+    # MARK_MAX_AGE_MIN (see strategy_pnl.py) — almost always because the
+    # market itself stopped trading (event over) and is waiting on
+    # resolution, not because anything here is broken.
+    mark_status: str
+    mark_age_min: float
+    opened_at: Optional[UtcDatetime] = None
+    last_trade_at: Optional[UtcDatetime] = None
 
 
 @app.get("/api/positions", response_model=list[OpenPosition])
@@ -2151,7 +2159,8 @@ async def get_all_open_positions():
 
         rows = client.query("""
             SELECT strategy, token_id, market_slug, title, outcome, net_shares,
-                   cost_usd, avg_price, mark_status, mark_price, value_usd, pnl_usd
+                   cost_usd, avg_price, mark_status, mark_age_min, mark_price,
+                   value_usd, pnl_usd, first_fill_at, last_fill_at
             FROM polybot.aware_strategy_pnl_positions
             WHERE strategy IN ('GABAGOOL', 'MIRROR')
               AND is_resolved = 0
@@ -2178,7 +2187,8 @@ async def get_all_open_positions():
 
         out: list[OpenPosition] = []
         for (strategy, token_id, market_slug, title, outcome, net_shares,
-             cost_usd, avg_price, mark_status, mark_price, value_usd, pnl_usd) in rows:
+             cost_usd, avg_price, mark_status, mark_age_min, mark_price,
+             value_usd, pnl_usd, first_fill_at, last_fill_at) in rows:
             priced = mark_status != 'STALE'
             cost_usd = float(cost_usd)
 
@@ -2194,6 +2204,8 @@ async def get_all_open_positions():
                     unrealized_pnl_pct=(
                         round(100 * float(pnl_usd) / cost_usd, 2) if priced and cost_usd else None
                     ),
+                    mark_status=mark_status, mark_age_min=round(float(mark_age_min), 1),
+                    opened_at=utc_iso(first_fill_at), last_trade_at=utc_iso(last_fill_at),
                 ))
                 continue
 
@@ -2216,6 +2228,8 @@ async def get_all_open_positions():
                     unrealized_pnl_pct=(
                         round(100 * float(pnl_usd) / cost_usd, 2) if priced and cost_usd else None
                     ),
+                    mark_status=mark_status, mark_age_min=round(float(mark_age_min), 1),
+                    opened_at=utc_iso(first_fill_at), last_trade_at=utc_iso(last_fill_at),
                 ))
 
         out.sort(key=lambda p: -p.cost_usd)
