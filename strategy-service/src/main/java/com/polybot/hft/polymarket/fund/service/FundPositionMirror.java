@@ -340,9 +340,9 @@ public class FundPositionMirror {
             String sql = """
                 INSERT INTO polybot.aware_fund_executions
                 (signal_id, fund_id, trader_username, market_slug, token_id, outcome,
-                 signal_type, trader_shares, fund_shares, execution_price, order_id,
-                 detected_at, executed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 signal_type, trader_shares, fund_shares, execution_price, trader_price,
+                 order_id, detected_at, executed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
             jdbcTemplate.update(sql,
@@ -356,6 +356,7 @@ public class FundPositionMirror {
                     signal.shares(),
                     shares,
                     price,
+                    signal.price(),
                     orderId,
                     signal.detectedAt(),
                     clock.instant()

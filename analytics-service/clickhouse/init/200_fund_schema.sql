@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS polybot.aware_fund_executions
     signal_type      String,           -- 'BUY', 'SELL', or 'CLOSE'
     trader_shares    Decimal(18, 6),   -- Trader's original trade size
     fund_shares      Decimal(18, 6),   -- Fund's scaled trade size
-    execution_price  Decimal(10, 6),   -- Fund's execution price
+    execution_price  Decimal(10, 6),   -- Fund's requested limit price (trader_price +/- slippage), NOT the real fill
+    trader_price     Decimal(10, 6),   -- Trader's actual execution price, from the signal that triggered this
     order_id         String,           -- Polymarket order ID
     detected_at      DateTime64(3),    -- When signal was detected
     executed_at      DateTime64(3)     -- When fund executed
@@ -92,6 +93,11 @@ ENGINE = MergeTree()
 ORDER BY (fund_id, executed_at)
 PARTITION BY toYYYYMM(executed_at)
 SETTINGS index_granularity = 8192;
+
+-- Existing deployments already have this table without trader_price; add it so
+-- entry-price comparisons are an exact join instead of a token/side/size/time
+-- proximity match against aware_global_trades_dedup.
+ALTER TABLE polybot.aware_fund_executions ADD COLUMN IF NOT EXISTS trader_price Decimal(10, 6);
 
 -- =============================================================================
 -- Fund Trades (mirrors of trader trades)
