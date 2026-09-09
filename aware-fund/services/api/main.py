@@ -2145,10 +2145,24 @@ class OpenPosition(BaseModel):
     last_trade_at: Optional[UtcDatetime] = None
 
 
-@app.get("/api/positions", response_model=list[OpenPosition])
-async def get_all_open_positions():
+class OpenPositionsResponse(BaseModel):
+    total: int
+    items: list[OpenPosition]
+
+
+@app.get("/api/positions", response_model=OpenPositionsResponse)
+async def get_all_open_positions(
+    category: str = Query(default="ALL", pattern="^(ALL|MIRROR|ACTIVE)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+):
     """
     Every open position, across every fund, in one flat list.
+
+    Bounded in practice — max-open-positions caps each mirror fund at 50, so
+    six of them is at most 300 — but paginated anyway rather than trusting
+    that ceiling to hold as funds are added or limits change, and to stay
+    consistent with /api/positions/closed, which has no such ceiling.
 
     Same source and same apportionment as /api/fund/positions (one call per
     fund), just not filtered down to a single fund_id — for a detail view
@@ -2157,22 +2171,44 @@ async def get_all_open_positions():
     try:
         client = get_clickhouse_client()
 
-        rows = client.query("""
-            SELECT strategy, token_id, market_slug, title, outcome, net_shares,
-                   cost_usd, avg_price, mark_status, mark_age_min, mark_price,
-                   value_usd, pnl_usd, first_fill_at, last_fill_at
+        strategy_filter = "strategy IN ('GABAGOOL', 'MIRROR')"
+        if category == 'MIRROR':
+            strategy_filter = "strategy = 'MIRROR'"
+        elif category == 'ACTIVE':
+            strategy_filter = "strategy = 'GABAGOOL'"
+
+        total = client.query(f"""
+            SELECT count()
             FROM polybot.aware_strategy_pnl_positions
-            WHERE strategy IN ('GABAGOOL', 'MIRROR')
+            WHERE {strategy_filter}
               AND is_resolved = 0
               AND calculated_at = (
                   SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
                   WHERE strategy IN ('GABAGOOL', 'MIRROR')
               )
-        """).result_rows
+        """).result_rows[0][0]
+
+        rows = client.query(f"""
+            SELECT strategy, token_id, market_slug, title, outcome, net_shares,
+                   cost_usd, avg_price, mark_status, mark_age_min, mark_price,
+                   value_usd, pnl_usd, first_fill_at, last_fill_at
+            FROM polybot.aware_strategy_pnl_positions
+            WHERE {strategy_filter}
+              AND is_resolved = 0
+              AND calculated_at = (
+                  SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
+                  WHERE strategy IN ('GABAGOOL', 'MIRROR')
+              )
+            ORDER BY cost_usd DESC
+            LIMIT %(limit)s OFFSET %(offset)s
+        """, parameters={'limit': limit, 'offset': offset}).result_rows
 
         # Mirror funds copy overlapping tokens, so a token's fill cannot be
         # attributed to one fund exactly — apportioned by requested shares,
-        # same as /api/fund/positions.
+        # same as /api/fund/positions. Computed only for this page's tokens:
+        # pagination happens before the split, on the underlying per-token
+        # rows, so a token shared by several funds can still expand into more
+        # rows than `limit` on a given page — same tradeoff as the closed list.
         mirror_tokens = {r[1] for r in rows if r[0] == 'MIRROR'}
         weights: dict[str, dict[str, float]] = {}
         if mirror_tokens:
@@ -2233,7 +2269,7 @@ async def get_all_open_positions():
                 ))
 
         out.sort(key=lambda p: -p.cost_usd)
-        return out
+        return OpenPositionsResponse(total=int(total), items=out)
 
     except HTTPException:
         raise

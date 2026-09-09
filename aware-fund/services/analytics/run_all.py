@@ -924,6 +924,9 @@ def main():
     parser.add_argument('--pnl-interval', type=int,
                        default=int(os.getenv('PNL_INTERVAL_SECONDS', '300')),
                        help='Seconds between P&L refreshes inside a cycle (default: 300)')
+    parser.add_argument('--resolution-interval', type=int,
+                       default=int(os.getenv('RESOLUTION_INTERVAL_SECONDS', '600')),
+                       help='Seconds between resolution checks inside a cycle (default: 600)')
     args = parser.parse_args()
 
     # Wait for ClickHouse rather than dying if it is not up yet. Restarting it
@@ -950,7 +953,8 @@ def main():
     if args.continuous:
         logger.info(
             f"Starting continuous mode with {args.interval}s interval "
-            f"(P&L refreshed every {args.pnl_interval}s in between)"
+            f"(P&L refreshed every {args.pnl_interval}s, resolutions checked "
+            f"every {args.resolution_interval}s in between)"
         )
         while True:
             try:
@@ -964,13 +968,34 @@ def main():
                 # hour: the dashboard, and the paper bankroll, which the sizing
                 # and the circuit breaker consult before every order. Left on
                 # the hourly cadence those decisions run on an hour-old balance.
+                #
+                # Resolution checks get their own faster tick for the same
+                # reason, just slower than P&L's: a market that stops trading
+                # (a match ends, a 15-minute crypto window closes) sits marked
+                # STALE — no fresh quote, not yet known to have settled —
+                # until the next resolution check sees it. On the hourly-only
+                # cadence that was up to 59 minutes of a settled position
+                # reading "unpriced" with no way to tell that apart from
+                # something being broken. Slower than P&L because this one
+                # makes real calls to Polymarket's Gamma API instead of just
+                # reading our own ClickHouse.
                 waited = 0
+                since_pnl = 0
+                since_resolution = 0
                 while waited < args.interval:
-                    nap = min(args.pnl_interval, args.interval - waited)
+                    nap = min(args.pnl_interval, args.resolution_interval, args.interval - waited)
                     time.sleep(nap)
                     waited += nap
-                    if waited < args.interval:
+                    since_pnl += nap
+                    since_resolution += nap
+                    if waited >= args.interval:
+                        break
+                    if since_pnl >= args.pnl_interval:
                         run_strategy_pnl_job(ch_client)
+                        since_pnl = 0
+                    if since_resolution >= args.resolution_interval:
+                        run_resolution_tracking(ch_client)
+                        since_resolution = 0
             except KeyboardInterrupt:
                 logger.info("Shutting down...")
                 break

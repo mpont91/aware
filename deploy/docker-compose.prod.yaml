@@ -255,6 +255,12 @@ services:
       # the paper bankroll both read it, so it runs far more often than the
       # hourly pipeline around it.
       PNL_INTERVAL_SECONDS: ${PNL_INTERVAL_SECONDS:-300}
+      # How often we ask Polymarket whether a market has resolved, between
+      # full cycles. Slower than P&L on purpose — this one calls the Gamma
+      # API instead of just reading our own ClickHouse — but still far more
+      # often than the hourly pipeline, so a position that stops trading
+      # doesn't sit reading "unpriced" for up to an hour before we even check.
+      RESOLUTION_INTERVAL_SECONDS: ${RESOLUTION_INTERVAL_SECONDS:-600}
       # Alert delivery. The dispatcher reads these from the environment and
       # treats a blank one as "channel off", but it only ever saw the variables
       # the container was handed — which did not include any of them, so

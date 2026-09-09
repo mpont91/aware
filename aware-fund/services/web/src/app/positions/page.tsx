@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/Loading'
 import { apiDate, cn, formatCurrency, formatPercent, getTimeAgo } from '@/lib/utils'
-import { api, ClosedPosition, OpenPosition } from '@/lib/api'
+import { api, ClosedPosition, ClosedPositionsResponse, OpenPosition, OpenPositionsResponse } from '@/lib/api'
 
 const categories = ['All', 'MIRROR', 'ACTIVE'] as const
 type CategoryFilter = (typeof categories)[number]
@@ -61,25 +61,62 @@ function CategoryFilterBar({ value, onChange }: { value: CategoryFilter; onChang
   )
 }
 
+function PaginationBar({
+  total, offset, pageSize, onOffsetChange,
+}: { total: number; offset: number; pageSize: number; onOffsetChange: (offset: number) => void }) {
+  const from = total === 0 ? 0 : offset + 1
+  const to = Math.min(offset + pageSize, total)
+  return (
+    <div className="flex items-center gap-3 text-sm text-slate-400">
+      <span>{total === 0 ? 'No results' : `${from}–${to} of ${total}`}</span>
+      <div className="flex gap-1">
+        <button
+          onClick={() => onOffsetChange(Math.max(0, offset - pageSize))}
+          disabled={offset === 0}
+          className="p-1.5 rounded-lg bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700"
+          aria-label="Previous page"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => onOffsetChange(offset + pageSize)}
+          disabled={offset + pageSize >= total}
+          className="p-1.5 rounded-lg bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700"
+          aria-label="Next page"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function OpenPositionsView() {
-  const [positions, setPositions] = useState<OpenPosition[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<CategoryFilter>('All')
+  const [offset, setOffset] = useState(0)
+  const [data, setData] = useState<OpenPositionsResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // Changing the category filter without resetting the page could land you
+  // past the end of a much shorter filtered list.
+  useEffect(() => { setOffset(0) }, [filter])
 
   useEffect(() => {
     let cancelled = false
+    const category = filter === 'All' ? 'ALL' : filter
     function load() {
       api
-        .getAllPositions()
-        .then((data) => { if (!cancelled) { setPositions(data); setError(null) } })
+        .getAllPositions(category, PAGE_SIZE, offset)
+        .then((res) => { if (!cancelled) { setData(res); setError(null) } })
         .catch(() => { if (!cancelled) setError('Failed to load positions') })
     }
     load()
     const interval = setInterval(load, 30000)
     return () => { cancelled = true; clearInterval(interval) }
-  }, [])
+  }, [filter, offset])
 
-  const rows = (positions ?? []).filter((p) => filter === 'All' || p.category === filter)
+  const rows = data?.items ?? []
+  const total = data?.total ?? 0
   const priced = rows.filter((p) => p.unrealized_pnl !== null && p.current_value !== null)
   const totalCost = rows.reduce((sum, p) => sum + p.cost_usd, 0)
   const totalValue = priced.reduce((sum, p) => sum + (p.current_value ?? 0), 0)
@@ -97,7 +134,10 @@ function OpenPositionsView() {
         </div>
       )}
 
-      <div className="mb-4"><CategoryFilterBar value={filter} onChange={setFilter} /></div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <CategoryFilterBar value={filter} onChange={setFilter} />
+        {data && <PaginationBar total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />}
+      </div>
 
       <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">
         <div className="overflow-x-auto">
@@ -112,7 +152,7 @@ function OpenPositionsView() {
               <div className="col-span-1 text-right">P&amp;L</div>
             </div>
 
-            {positions === null ? (
+            {data === null ? (
               <TableSkeleton cols={[2, 3, 2, 1, 2, 1, 1]} />
             ) : rows.length === 0 ? (
               <div className="p-10 text-center">
@@ -214,7 +254,7 @@ function OpenPositionsView() {
 
             {rows.length > 0 && (
               <div className="grid grid-cols-12 gap-4 p-4 bg-slate-800/50 border-t border-slate-700 font-semibold">
-                <div className="col-span-2 text-slate-300">Totals</div>
+                <div className="col-span-2 text-slate-300">This page</div>
                 <div className="col-span-5 text-slate-500 text-xs self-center">
                   {rows.length} position{rows.length === 1 ? '' : 's'}
                   {staleCount > 0 && ` · ${staleCount} without a fresh quote, excluded from P&L`}
@@ -239,6 +279,12 @@ function OpenPositionsView() {
         </div>
       </div>
 
+      {total > rows.length && (
+        <p className="text-xs text-slate-500 mt-3 text-center">
+          Totals above are for this page only, not all {total.toLocaleString()} open positions.
+        </p>
+      )}
+
       <div className="rounded-xl bg-slate-800/20 border border-slate-800 p-4 text-sm text-slate-400 space-y-2 mt-6">
         <p>
           <span className="text-slate-300 font-medium">&ldquo;no quote&rdquo; / &ldquo;unpriced&rdquo;</span> means
@@ -259,7 +305,7 @@ function OpenPositionsView() {
 function ClosedPositionsView() {
   const [filter, setFilter] = useState<CategoryFilter>('All')
   const [offset, setOffset] = useState(0)
-  const [data, setData] = useState<{ total: number; items: ClosedPosition[] } | null>(null)
+  const [data, setData] = useState<ClosedPositionsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   // Changing the category filter without resetting the page could land you
@@ -284,9 +330,6 @@ function ClosedPositionsView() {
   const totalPnlPct = totalCost ? (totalPnl / totalCost) * 100 : 0
   const wins = items.filter((p) => p.won).length
 
-  const from = total === 0 ? 0 : offset + 1
-  const to = Math.min(offset + PAGE_SIZE, total)
-
   return (
     <>
       {error && (
@@ -298,29 +341,7 @@ function ClosedPositionsView() {
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <CategoryFilterBar value={filter} onChange={setFilter} />
-        {data && (
-          <div className="flex items-center gap-3 text-sm text-slate-400">
-            <span>{total === 0 ? 'No results' : `${from}–${to} of ${total}`}</span>
-            <div className="flex gap-1">
-              <button
-                onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
-                disabled={offset === 0}
-                className="p-1.5 rounded-lg bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700"
-                aria-label="Previous page"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setOffset((o) => o + PAGE_SIZE)}
-                disabled={offset + PAGE_SIZE >= total}
-                className="p-1.5 rounded-lg bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-slate-700"
-                aria-label="Next page"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
+        {data && <PaginationBar total={total} offset={offset} pageSize={PAGE_SIZE} onOffsetChange={setOffset} />}
       </div>
 
       <div className="rounded-xl bg-slate-900/50 border border-slate-800 overflow-hidden">

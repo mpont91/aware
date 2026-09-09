@@ -400,6 +400,11 @@ export interface OpenPosition {
   last_trade_at: string | null
 }
 
+export interface OpenPositionsResponse {
+  total: number
+  items: OpenPosition[]
+}
+
 export interface ClosedPosition {
   fund_id: string
   category: 'MIRROR' | 'ACTIVE'
@@ -611,8 +616,14 @@ export const api = {
     return fetchJson<FundsSummary>('/api/fund/summary')
   },
 
-  async getAllPositions(): Promise<OpenPosition[]> {
-    return fetchJson<OpenPosition[]>('/api/positions')
+  async getAllPositions(
+    category: 'ALL' | 'MIRROR' | 'ACTIVE' = 'ALL',
+    limit = 100,
+    offset = 0
+  ): Promise<OpenPositionsResponse> {
+    return fetchJson<OpenPositionsResponse>(
+      `/api/positions${qp({ category, limit, offset })}`
+    )
   },
 
   async getClosedPositions(
