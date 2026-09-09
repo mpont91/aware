@@ -400,6 +400,29 @@ export interface OpenPosition {
   last_trade_at: string | null
 }
 
+export interface ClosedPosition {
+  fund_id: string
+  category: 'MIRROR' | 'ACTIVE'
+  token_id: string
+  market_slug: string
+  title: string
+  outcome: string
+  shares: number
+  cost_usd: number
+  avg_entry_price: number
+  won: boolean
+  proceeds_usd: number
+  realized_pnl: number
+  realized_pnl_pct: number | null
+  opened_at: string | null
+  resolved_at: string | null
+}
+
+export interface ClosedPositionsResponse {
+  total: number
+  items: ClosedPosition[]
+}
+
 export interface FundPnlHistory {
   fund_id: string
   days: number
@@ -590,6 +613,16 @@ export const api = {
 
   async getAllPositions(): Promise<OpenPosition[]> {
     return fetchJson<OpenPosition[]>('/api/positions')
+  },
+
+  async getClosedPositions(
+    category: 'ALL' | 'MIRROR' | 'ACTIVE' = 'ALL',
+    limit = 50,
+    offset = 0
+  ): Promise<ClosedPositionsResponse> {
+    return fetchJson<ClosedPositionsResponse>(
+      `/api/positions/closed${qp({ category, limit, offset })}`
+    )
   },
 
   async getPnlHistory(days = 7): Promise<PnlHistory> {

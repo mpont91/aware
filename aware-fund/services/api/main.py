@@ -2242,6 +2242,156 @@ async def get_all_open_positions():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ClosedPosition(BaseModel):
+    """One settled position, attributed to whichever fund/strategy held it."""
+    fund_id: str
+    category: str  # 'MIRROR' or 'ACTIVE'
+    token_id: str
+    market_slug: str
+    title: str = ''
+    outcome: str
+    shares: float
+    cost_usd: float
+    avg_entry_price: float
+    won: bool
+    proceeds_usd: float  # what it actually paid out: full value if won, 0 if not
+    realized_pnl: float
+    realized_pnl_pct: Optional[float] = None
+    opened_at: Optional[UtcDatetime] = None
+    resolved_at: Optional[UtcDatetime] = None
+
+
+class ClosedPositionsResponse(BaseModel):
+    total: int
+    items: list[ClosedPosition]
+
+
+@app.get("/api/positions/closed", response_model=ClosedPositionsResponse)
+async def get_closed_positions(
+    category: str = Query(default="ALL", pattern="^(ALL|MIRROR|ACTIVE)$"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """
+    Settled positions, most recently resolved first, paginated.
+
+    This grows without bound as markets keep resolving (thousands within
+    weeks), so unlike /api/positions this is never returned whole — a page
+    at a time, by resolution date, same as the leaderboard already does for
+    its own listing.
+
+    Same source and apportionment as /api/positions; the differences are
+    is_resolved = 1, and a join to aware_market_resolutions for when it
+    actually settled (aware_strategy_pnl_positions itself has no
+    resolved_at, only when we last saw the position, not when it ended).
+    """
+    try:
+        client = get_clickhouse_client()
+
+        strategy_filter = "strategy IN ('GABAGOOL', 'MIRROR')"
+        if category == 'MIRROR':
+            strategy_filter = "strategy = 'MIRROR'"
+        elif category == 'ACTIVE':
+            strategy_filter = "strategy = 'GABAGOOL'"
+
+        # The category filter narrows this count and the page below the same
+        # way, so pagination and "N total" stay consistent with each other.
+        total = client.query(f"""
+            SELECT count()
+            FROM polybot.aware_strategy_pnl_positions
+            WHERE {strategy_filter}
+              AND is_resolved = 1
+              AND calculated_at = (
+                  SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
+                  WHERE strategy IN ('GABAGOOL', 'MIRROR')
+              )
+        """).result_rows[0][0]
+
+        rows = client.query(f"""
+            SELECT p.strategy, p.token_id, p.market_slug, p.title, p.outcome,
+                   p.net_shares, p.cost_usd, p.avg_price, p.won, p.value_usd,
+                   p.pnl_usd, p.first_fill_at, r.resolution_time
+            FROM polybot.aware_strategy_pnl_positions p
+            LEFT JOIN (
+                SELECT condition_id, max(resolution_time) AS resolution_time
+                FROM polybot.aware_market_resolutions
+                GROUP BY condition_id
+            ) r ON p.condition_id = r.condition_id
+            WHERE {strategy_filter}
+              AND p.is_resolved = 1
+              AND p.calculated_at = (
+                  SELECT max(calculated_at) FROM polybot.aware_strategy_pnl_positions
+                  WHERE strategy IN ('GABAGOOL', 'MIRROR')
+              )
+            ORDER BY r.resolution_time DESC
+            LIMIT %(limit)s OFFSET %(offset)s
+        """, parameters={'limit': limit, 'offset': offset}).result_rows
+
+        # Same apportionment as /api/positions, computed only for this page's
+        # tokens — pagination happens before the mirror split, on the
+        # underlying per-token rows, so a token shared by several funds can
+        # still expand into more rows than `limit` on a given page.
+        mirror_tokens = {r[1] for r in rows if r[0] == 'MIRROR'}
+        weights: dict[str, dict[str, float]] = {}
+        if mirror_tokens:
+            weight_rows = client.query("""
+                SELECT token_id, fund_id, sum(toFloat64(fund_shares)) AS requested
+                FROM polybot.aware_fund_executions
+                WHERE token_id IN %(tokens)s
+                GROUP BY token_id, fund_id
+            """, parameters={'tokens': tuple(mirror_tokens)}).result_rows
+            for token_id, fid, requested in weight_rows:
+                weights.setdefault(token_id, {})[fid.upper()] = float(requested)
+
+        def make(fund_id: str, cat: str, token_id: str, market_slug: str, title: str,
+                  outcome: str, shares: float, cost: float, avg_price: float, won: bool,
+                  proceeds: float, pnl: float, opened_at, resolved_at) -> ClosedPosition:
+            return ClosedPosition(
+                fund_id=fund_id, category=cat, token_id=token_id, market_slug=market_slug,
+                title=title or market_slug, outcome=outcome, shares=round(shares, 2),
+                cost_usd=round(cost, 2), avg_entry_price=round(avg_price, 4), won=won,
+                proceeds_usd=round(proceeds, 2), realized_pnl=round(pnl, 2),
+                realized_pnl_pct=(round(100 * pnl / cost, 2) if cost else None),
+                opened_at=utc_iso(opened_at), resolved_at=utc_iso(resolved_at),
+            )
+
+        items: list[ClosedPosition] = []
+        for (strategy, token_id, market_slug, title, outcome, net_shares,
+             cost_usd, avg_price, won, value_usd, pnl_usd, first_fill_at,
+             resolution_time) in rows:
+            cost_usd = float(cost_usd)
+            won = bool(won)
+
+            if strategy == 'GABAGOOL':
+                items.append(make(
+                    'ALPHA-ARB', 'ACTIVE', token_id, market_slug, title, outcome,
+                    float(net_shares), cost_usd, float(avg_price), won,
+                    float(value_usd), float(pnl_usd), first_fill_at, resolution_time,
+                ))
+                continue
+
+            token_weights = weights.get(token_id, {})
+            total_weight = sum(token_weights.values())
+            if not total_weight:
+                continue
+            for fund_id, requested in token_weights.items():
+                share = requested / total_weight
+                items.append(make(
+                    fund_id, 'MIRROR', token_id, market_slug, title, outcome,
+                    float(net_shares) * share, cost_usd * share, float(avg_price), won,
+                    float(value_usd) * share, float(pnl_usd) * share,
+                    first_fill_at, resolution_time,
+                ))
+
+        return ClosedPositionsResponse(total=int(total), items=items)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get closed positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/fund/trades", response_model=list[FundTrade])
 async def get_fund_trades(
     fund_id: str = Query(default="psi-10-main"),
