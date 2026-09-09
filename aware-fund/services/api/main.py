@@ -2246,11 +2246,11 @@ async def get_all_open_positions(
                 continue
 
             token_weights = weights.get(token_id, {})
-            total = sum(token_weights.values())
-            if not total:
+            total_weight = sum(token_weights.values())
+            if not total_weight:
                 continue
             for fund_id, requested in token_weights.items():
-                share = requested / total
+                share = requested / total_weight
                 shares = float(net_shares) * share
                 cost = cost_usd * share
                 out.append(OpenPosition(
