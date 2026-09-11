@@ -17,10 +17,14 @@ Positions are marked into three buckets:
                 still quoting 0.99 from hours ago would otherwise book a large
                 fake profit. Reported separately so the gap stays visible.
 
-Attribution is by token_id: tokens traded by the fund mirror come from
-aware_fund_executions, the rest of the strategy's tokens from
-strategy_gabagool_orders. A token touched by both is attributed to MIRROR,
-which is the more specific signal; that overlap is reported separately.
+Attribution is per fill, by order_id: the simulator stamps each fill's Kafka
+key as "simtrade:<order_id>:<uuid>" (see PaperExchangeSimulator), so the
+order_id that placed a fill can be recovered from user_trades.event_key and
+matched against aware_fund_executions.order_id / strategy_gabagool_orders.order_id.
+This is exact even when both strategies trade the same token_id (e.g. a
+GABAGOOL complete-set leg the mirror also happens to trade): each fill keeps
+the strategy that actually placed it, rather than one strategy's fills on a
+shared token being swept into the other's.
 
 Environment Variables:
     CLICKHOUSE_HOST - ClickHouse host (default: localhost)
@@ -47,11 +51,37 @@ logger = logging.getLogger(__name__)
 SIM_PROXY = os.getenv('SIM_PROXY_ADDRESS', 'sim')
 MARK_MAX_AGE_MIN = float(os.getenv('MARK_MAX_AGE_MIN', '15'))
 
-# One row per token we hold, marked to payout (resolved) or best bid (open).
+# One row per (strategy, token) we hold, marked to payout (resolved) or best bid (open).
+# A token can produce two rows if both strategies traded it; each keeps only
+# its own fills because attribution happens per fill (order_id), not per token.
 POSITIONS_QUERY = """
 WITH
+    trade_orders AS (
+        SELECT
+            *,
+            splitByChar(':', event_key)[2] AS order_id
+        FROM polybot.user_trades
+        WHERE proxy_address = %(sim_proxy)s
+    ),
+    mirror_orders AS (
+        SELECT DISTINCT order_id FROM polybot.aware_fund_executions
+    ),
+    gabagool_orders AS (
+        SELECT DISTINCT order_id FROM polybot.strategy_gabagool_orders
+    ),
+    attributed AS (
+        SELECT
+            *,
+            multiIf(
+                order_id IN (SELECT order_id FROM mirror_orders),   'MIRROR',
+                order_id IN (SELECT order_id FROM gabagool_orders), 'GABAGOOL',
+                'UNATTRIBUTED'
+            ) AS strategy
+        FROM trade_orders
+    ),
     fills AS (
         SELECT
+            strategy,
             token_id,
             any(condition_id)  AS condition_id,
             any(market_slug)   AS market_slug,
@@ -64,15 +94,8 @@ WITH
             sum(size * price)  AS volume_usd,
             min(ts)            AS first_fill_at,
             max(ts)            AS last_fill_at
-        FROM polybot.user_trades
-        WHERE proxy_address = %(sim_proxy)s
-        GROUP BY token_id
-    ),
-    mirror_tokens AS (
-        SELECT DISTINCT token_id FROM polybot.aware_fund_executions
-    ),
-    gabagool_tokens AS (
-        SELECT DISTINCT token_id FROM polybot.strategy_gabagool_orders
+        FROM attributed
+        GROUP BY strategy, token_id
     ),
     resolutions AS (
         SELECT
@@ -87,11 +110,7 @@ WITH
         FROM polybot.market_ws_tob_latest
     )
 SELECT
-    multiIf(
-        f.token_id IN (SELECT token_id FROM mirror_tokens),   'MIRROR',
-        f.token_id IN (SELECT token_id FROM gabagool_tokens), 'GABAGOOL',
-        'UNATTRIBUTED'
-    ) AS strategy,
+    f.strategy     AS strategy,
     f.token_id     AS token_id,
     f.condition_id AS condition_id,
     f.market_slug  AS market_slug,
@@ -122,13 +141,27 @@ WHERE f.net_shares > 0
 ORDER BY strategy, f.cost_usd DESC
 """
 
-# Tokens claimed by both strategies; reported so the attribution stays honest.
-OVERLAP_QUERY = """
+# Markets both strategies have traded. No longer a misattribution risk now
+# that fills are split by order_id, just informational (e.g. an arb leg the
+# mirror separately took a position in).
+TOKEN_OVERLAP_QUERY = """
 SELECT count()
 FROM (
     SELECT DISTINCT token_id FROM polybot.aware_fund_executions
     INTERSECT
     SELECT DISTINCT token_id FROM polybot.strategy_gabagool_orders
+)
+"""
+
+# order_id claimed by both strategies would mean a fill can't be attributed
+# unambiguously and this job's assumption is broken; should always be zero
+# since order_id is a UUID minted once per order placement.
+ORDER_ID_CONFLICT_QUERY = """
+SELECT count()
+FROM (
+    SELECT DISTINCT order_id FROM polybot.aware_fund_executions
+    INTERSECT
+    SELECT DISTINCT order_id FROM polybot.strategy_gabagool_orders
 )
 """
 
@@ -151,7 +184,7 @@ def _rows_to_dicts(result) -> List[Dict[str, Any]]:
 
 
 def calculate_positions(client: ClickHouseClient) -> List[Dict[str, Any]]:
-    """Return one marked position per token held by the simulator."""
+    """Return one marked position per (strategy, token) held by the simulator."""
     result = client.client.query(POSITIONS_QUERY, parameters={'sim_proxy': SIM_PROXY})
     positions = _rows_to_dicts(result)
 
@@ -313,7 +346,8 @@ def store(client: ClickHouseClient, calculated_at: datetime,
 
 
 def format_report(totals: List[Dict[str, Any]], positions: List[Dict[str, Any]],
-                  by_fund: List[Dict[str, Any]], overlap: int) -> str:
+                  by_fund: List[Dict[str, Any]], token_overlap: int,
+                  order_id_conflicts: int) -> str:
     lines = []
     w = 92
     lines.append("=" * w)
@@ -370,9 +404,15 @@ def format_report(totals: List[Dict[str, Any]], positions: List[Dict[str, Any]],
             lines.append(f"  {p['strategy']:<9} {p['title'][:44]:<44} "
                          f"{p['pnl_usd']:>+10,.2f}  ({'won' if p['won'] else 'lost'})")
 
-    if overlap:
+    if token_overlap:
         lines.append("")
-        lines.append(f"Note: {overlap} token(s) traded by both strategies, counted under MIRROR.")
+        lines.append(f"Note: {token_overlap} token(s) traded by both strategies "
+                     "(each fill still attributed by its own order_id).")
+
+    if order_id_conflicts:
+        lines.append("")
+        lines.append(f"WARNING: {order_id_conflicts} order_id(s) claimed by both strategies "
+                     "-- attribution is ambiguous for those fills.")
 
     unattributed = next((t for t in totals if t['strategy'] == 'UNATTRIBUTED'), None)
     if unattributed:
@@ -395,7 +435,11 @@ def run(dry_run: bool = False) -> Dict[str, Any]:
 
     totals = aggregate(positions)
     by_fund = split_mirror_by_fund(client, positions)
-    overlap = client.client.query(OVERLAP_QUERY).result_rows[0][0]
+    token_overlap = client.client.query(TOKEN_OVERLAP_QUERY).result_rows[0][0]
+    order_id_conflicts = client.client.query(ORDER_ID_CONFLICT_QUERY).result_rows[0][0]
+    if order_id_conflicts:
+        logger.warning("%d order_id(s) claimed by both strategies; attribution is ambiguous "
+                        "for those fills", order_id_conflicts)
 
     if not dry_run:
         store(client, calculated_at, positions, totals)
@@ -409,7 +453,8 @@ def run(dry_run: bool = False) -> Dict[str, Any]:
         'strategies': totals,
         'positions': positions,
         'by_fund': by_fund,
-        'overlap_tokens': overlap,
+        'token_overlap': token_overlap,
+        'order_id_conflicts': order_id_conflicts,
     }
 
 
@@ -425,8 +470,8 @@ def main():
         print("No simulator fills found. Is the paper exchange running?")
         return
 
-    print(format_report(result['strategies'], result['positions'],
-                        result['by_fund'], result['overlap_tokens']))
+    print(format_report(result['strategies'], result['positions'], result['by_fund'],
+                        result['token_overlap'], result['order_id_conflicts']))
 
 
 if __name__ == '__main__':
