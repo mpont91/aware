@@ -19,7 +19,8 @@ services:
     container_name: aware-redpanda
     logging: *default-logging
     # Above --memory below: seastar reserves that, and the process needs
-    # headroom on top of it.
+    # headroom on top of it. Unchanged in the 8GB->16GB host resize below —
+    # usage sits at ~500MB, well under this already.
     mem_limit: 1300m
     command:
       - redpanda
@@ -64,10 +65,16 @@ services:
     # ceiling left it almost no working memory and the OvercommitTracker
     # started killing ordinary queries (Code 241, MEMORY_LIMIT_EXCEEDED) —
     # including the fund's trade-polling query, which is how it silently
-    # stopped picking up copyable trades for hours at a time. Bumped by 576m,
-    # reclaimed from caddy/web/api/grafana below, which were sized generously
-    # above their actual usage.
-    mem_limit: 3136m
+    # stopped picking up copyable trades for hours at a time. 3136m (bumped
+    # by 576m, reclaimed from caddy/web/api/grafana below) still wasn't
+    # enough: it kept hitting MEMORY_LIMIT_EXCEEDED under load, and on a
+    # 4-core/8GB host it was also using 3+ cores continuously (load average
+    # over 10) which starved the JVM services' JDBC calls and is the likely
+    # trigger behind a separate 3h gap in aware_fund_executions on 2026-09-10.
+    # Bumped again now that the host itself is being resized to 8 vCores/16GB —
+    # this raise only makes sense together with that resize, not on the old
+    # 4-core/8GB box.
+    mem_limit: 4608m
     depends_on:
       redpanda:
         condition: service_healthy
@@ -116,7 +123,9 @@ services:
         SERVICE: executor-service
     container_name: aware-executor
     logging: *default-logging
-    mem_limit: 640m
+    # Bumped from 640m with the 16GB host resize, for the same headroom
+    # reasons as strategy below — runs at ~430MB, this just gives it room.
+    mem_limit: 768m
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -159,7 +168,12 @@ services:
         SERVICE: strategy-service
     container_name: aware-strategy
     logging: *default-logging
-    mem_limit: 1g   # busiest of the three: six mirror funds plus GABAGOOL
+    # Was 1g. Bumped with the 16GB host resize: the previous GC-thrashing
+    # incident this comment block describes happened at 640m, and 1g still
+    # left no margin once the host itself started running out of memory and
+    # CPU under ClickHouse's load (see its mem_limit comment) — busiest of
+    # the three JVMs, six mirror funds plus GABAGOOL.
+    mem_limit: 1536m
     depends_on:
       executor:
         condition: service_healthy
@@ -199,7 +213,8 @@ services:
         SERVICE: ingestor-service
     container_name: aware-ingestor
     logging: *default-logging
-    mem_limit: 640m
+    # Bumped from 640m with the 16GB host resize, same reasoning as executor.
+    mem_limit: 768m
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -239,7 +254,13 @@ services:
       dockerfile: Dockerfile
     container_name: aware-analytics
     logging: *default-logging
-    mem_limit: 1g
+    # Was 1g: the pnl/insider/market-classifier jobs run at ~1.0-1.1GB RSS,
+    # right against that ceiling, so the container was hitting the kernel
+    # OOM killer repeatedly (13 restarts observed in one day) rather than
+    # ClickHouse's own OvercommitTracker taking the hit. Bumped with the
+    # 16GB host resize to give it real headroom instead of sitting flush
+    # against the limit.
+    mem_limit: 2048m
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -289,9 +310,10 @@ services:
       dockerfile: Dockerfile
     container_name: aware-api
     logging: *default-logging
-    # Running at ~54M steady state; 160m keeps ~3x headroom while freeing 224m
-    # for clickhouse (see its mem_limit comment).
-    mem_limit: 160m
+    # Running at ~54M steady state; 192m keeps ample headroom now that the
+    # 16GB host resize means this no longer needs to be squeezed for
+    # clickhouse (see its mem_limit comment).
+    mem_limit: 192m
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -336,9 +358,10 @@ services:
         API_INTERNAL_URL: http://api:8000
     container_name: aware-web
     logging: *default-logging
-    # Running at ~48M steady state; 192m keeps ~4x headroom while freeing
-    # 192m for clickhouse (see its mem_limit comment).
-    mem_limit: 192m
+    # Running at ~48M steady state; 256m keeps ample headroom now that the
+    # 16GB host resize means this no longer needs to be squeezed for
+    # clickhouse (see its mem_limit comment).
+    mem_limit: 256m
     depends_on:
       - api
     environment:
@@ -366,9 +389,11 @@ services:
       dockerfile: Dockerfile.caddy
     container_name: aware-caddy
     logging: *default-logging
-    # Running at ~23M steady state; 64m keeps ~2.8x headroom while freeing
-    # 64m for clickhouse (see its mem_limit comment).
-    mem_limit: 64m
+    # Running at ~23M steady state, but was observed at 61/64m (95% of the
+    # limit) in production — 96m restores real headroom now that the 16GB
+    # host resize means this no longer needs to be squeezed for clickhouse
+    # (see its mem_limit comment).
+    mem_limit: 96m
     depends_on:
       - web
     ports:
@@ -397,7 +422,9 @@ services:
     image: prom/prometheus:v2.48.0
     container_name: aware-prometheus
     logging: *default-logging
-    mem_limit: 256m
+    # Bumped from 256m with the 16GB host resize — modest headroom increase,
+    # not a response to any observed pressure on this one.
+    mem_limit: 320m
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -416,9 +443,10 @@ services:
     image: grafana/grafana:10.2.2
     container_name: aware-grafana
     logging: *default-logging
-    # Running at ~88M steady state; 160m keeps ~1.8x headroom while freeing
-    # 96m for clickhouse (see its mem_limit comment).
-    mem_limit: 160m
+    # Running at ~88M steady state; 192m keeps ample headroom now that the
+    # 16GB host resize means this no longer needs to be squeezed for
+    # clickhouse (see its mem_limit comment).
+    mem_limit: 192m
     depends_on:
       - prometheus
     environment:
